@@ -1,0 +1,51 @@
+{
+  "name": "tardigrade",
+  "version": "0.0.1",
+  "description": "An agent you can kill, and it comes back.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/acoyfellow/tardigrade.git"
+  },
+  "homepage": "https://github.com/acoyfellow/tardigrade#readme",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "dev": "vite build --config client/vite.config.ts && wrangler dev",
+    "build": "vite build --config client/vite.config.ts",
+    "deploy": "npm run build && wrangler deploy",
+    "typecheck": "tsc -p .",
+    "lint": "oxlint",
+    "test": "vitest run",
+    "check": "bash scripts/gate.sh",
+    "gate": "bash scripts/gate.sh",
+    "kill5": "node scripts/kill5.mjs",
+    "vendor:pi-durable": "node scripts/vendor-pi-durable-do-sqlite.mjs",
+    "vendor:anti-slop": "node scripts/vendor-anti-slop.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.0.3",
+    "@earendil-works/pi-ai": "1.0.3",
+    "@earendil-works/pi-durable": "1.0.3",
+    "@effect/platform-browser": "4.0.0",
+    "effect": "4.0.0",
+    "foldkit": "0.166.0",
+    "isomorphic-git": "1.43.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261007.1",
+    "@foldkit/vite-plugin": "^0.26.1",
+    "@oxlint/plugins": "1.78.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "happy-dom": "^20.14.5",
+    "oxlint": "1.78.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3",
+    "wrangler": "4.147.0"
+  }
+}

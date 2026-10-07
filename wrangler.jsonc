@@ -1,0 +1,68 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "tardigrade",
+	"main": "worker/index.ts",
+	// Private by default: anyone with a public URL could spend your Workers AI budget. See README, Deploy.
+	"workers_dev": false,
+	"preview_urls": false,
+	"compatibility_date": "2026-09-01",
+	"compatibility_flags": [
+		"nodejs_compat",
+		"nodejs_compat_populate_process_env"
+	],
+	// MODEL is any Workers AI model with function calling.
+	"vars": {
+		"MODEL": "@cf/zai-org/glm-5.3"
+	},
+	// Workers AI and Artifacts have no local simulator: `wrangler dev` calls the real services.
+	"ai": {
+		"binding": "AI",
+		"remote": true
+	},
+	"artifacts": [
+		{
+			"binding": "ARTIFACTS",
+			"namespace": "default",
+			"remote": true
+		}
+	],
+	"assets": {
+		"directory": "./client/dist",
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*"
+		]
+	},
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "AGENT",
+				"class_name": "Agent"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"Conformance"
+			]
+		},
+		{
+			"tag": "v2",
+			"new_sqlite_classes": [
+				"Agent"
+			]
+		},
+		{
+			"tag": "v3",
+			"deleted_classes": [
+				"Conformance"
+			]
+		}
+	],
+	"observability": {
+		"enabled": true
+	}
+}

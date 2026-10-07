@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@theme {
+	--color-bg: #0e0d13;
+	--color-panel: #15141c;
+	--color-raised: #1c1a26;
+	--color-line: #25232f;
+	--color-line-strong: #363249;
+	--color-ink: #ecebf3;
+	--color-dim: #a19db4;
+	--color-faint: #69657d;
+	--color-accent: #c9b3ff;
+	--color-accent-ink: #17131f;
+	--color-accent-soft: #251f3a;
+	--color-accent-line: #3f3668;
+	--color-ok: #7ee0a8;
+	--color-warn: #ffcf70;
+	--color-bad: #ff6b7a;
+	--color-bad-soft: #2a1418;
+	--color-bad-line: #5a2a33;
+	--font-sans: "Google Sans Flex", "Google Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	--font-mono: "Google Sans Mono", "Google Sans Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	--animate-pulse-fast: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@layer base {
+	html,
+	body,
+	#root {
+		@apply h-full bg-bg text-ink font-sans antialiased;
+		font-size: 15px;
+		line-height: 1.55;
+	}
+
+	button:focus-visible,
+	textarea:focus-visible {
+		@apply outline-2 outline-offset-2 outline-accent;
+	}
+}

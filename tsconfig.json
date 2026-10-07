@@ -1,0 +1,18 @@
+{
+	"compilerOptions": {
+		"target": "es2024",
+		"lib": ["es2024", "DOM", "DOM.Iterable"],
+		"module": "esnext",
+		"moduleResolution": "bundler",
+		"types": ["@cloudflare/workers-types"],
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"exactOptionalPropertyTypes": true,
+		"noImplicitOverride": true,
+		"noFallthroughCasesInSwitch": true,
+		"verbatimModuleSyntax": true,
+		"skipLibCheck": true,
+		"noEmit": true
+	},
+	"include": ["shared", "worker", "test", "client/src", "client/vite.config.ts", "oxlint.config.ts", "vitest.config.ts"]
+}
