@@ -3,9 +3,9 @@ import { Type } from "@earendil-works/pi-ai";
 import { type CreateModelsOptions, createModels, type Provider } from "@earendil-works/pi-ai/models";
 import { cloudflareWorkersAIProvider } from "@earendil-works/pi-ai/providers/cloudflare-workers-ai";
 import { type Conversation, createRegistry, defineExtension, defineTool, Harness, LiveDoc, section } from "@earendil-works/pi-durable";
-import { Context, Effect, Layer, Option, Queue, Schema, Stream } from "effect";
+import { Context, Effect, Layer, Match, Option, Queue, Schema, Stream } from "effect";
 import { type Block, FilesFrame } from "../shared/protocol";
-import { Repo, type RepoFiles } from "./files";
+import { type InvalidPath, type PushRejected, Repo, type RepoFiles, type RepoUnavailable } from "./files";
 import { bindingAuthContext } from "./model";
 import { Broadcast } from "./services";
 import { openDurableObjectSqliteStorage } from "./vendor/pi-durable-do-sqlite";
@@ -32,8 +32,19 @@ const text = (value: string) => ({ content: [{ type: "text" as const, text: valu
 
 export type FilesChanged = (repo: RepoFiles) => Effect.Effect<void>;
 
+type ToolFailure = InvalidPath | RepoUnavailable | PushRejected;
+
+const explain = (failure: ToolFailure): string =>
+	Match.value(failure).pipe(
+		Match.tagsExhaustive({
+			InvalidPath: ({ path }) => `Invalid path: ${path}`,
+			RepoUnavailable: ({ repo }) => `The file store for ${repo} is unavailable. Try again later.`,
+			PushRejected: ({ repo }) => `The commit to ${repo} was made but the push was rejected twice. Try again later.`,
+		}),
+	);
+
 const tools = (repo: RepoFiles, filesChanged: FilesChanged, context: Context.Context<never>) => {
-	const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromiseWith(context)(effect);
+	const run = <A>(effect: Effect.Effect<A, ToolFailure>) => Effect.runPromiseWith(context)(effect.pipe(Effect.catch((failure) => Effect.fail(new Error(explain(failure))))));
 
 	return [
 		defineTool({

@@ -14,11 +14,14 @@ npm run --silent lint
 step "tests (UI stories and storage conformance in workerd)"
 npm run --silent test
 
+step "README code excerpts match the source"
+node scripts/check-excerpts.mjs
+
 step "build"
 npm run --silent build >/dev/null
 
 step "wrangler configs keep public URLs off"
-for config in wrangler.jsonc test/conformance/wrangler.jsonc; do
+for config in wrangler.jsonc test/conformance/wrangler.jsonc test/revival/wrangler.jsonc; do
 	grep -Eq '"workers_dev":[[:space:]]*false' "$config" || { echo "$config: workers_dev must be false"; exit 1; }
 	grep -Eq '"preview_urls":[[:space:]]*false' "$config" || { echo "$config: preview_urls must be false"; exit 1; }
 done

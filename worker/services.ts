@@ -2,26 +2,31 @@ import { Cause, Clock, Context, Effect, Layer, Option, Schema } from "effect";
 import { type ConversationName, type ServerFrame, ServerFrameJson, type TimelineEvent } from "../shared/protocol";
 import { Meta } from "./meta";
 
+export class StorageFailed extends Schema.TaggedError<StorageFailed>()("StorageFailed", { step: Schema.String, reason: Schema.String }) {}
+
 export class SocketSendFailed extends Schema.TaggedError<SocketSendFailed>()("SocketSendFailed", { reason: Schema.String }) {}
 
 const encodeFrame = Schema.encodeSync(ServerFrameJson);
 
 export type ObjectState = {
 	readonly sockets: () => ReadonlyArray<WebSocket>;
-	readonly setAlarm: (at: number) => Effect.Effect<void>;
-	readonly clearAlarm: Effect.Effect<void>;
-	readonly flush: Effect.Effect<void>;
+	readonly setAlarm: (at: number) => Effect.Effect<void, StorageFailed>;
+	readonly clearAlarm: Effect.Effect<void, StorageFailed>;
+	readonly flush: Effect.Effect<void, StorageFailed>;
 	readonly abort: (reason: string) => Effect.Effect<never>;
 	readonly background: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<void>;
 };
+
+const storageStep = (step: string, run: () => Promise<void>) =>
+	Effect.tryPromise({ try: run, catch: (cause) => new StorageFailed({ step, reason: String(cause) }) });
 
 export class DurableObjectContext extends Context.Service<DurableObjectContext, ObjectState>()("tardigrade/DurableObjectContext") {
 	static readonly layer = (ctx: DurableObjectState) =>
 		Layer.succeed(DurableObjectContext, {
 			sockets: () => ctx.getWebSockets(),
-			setAlarm: (at) => Effect.promise(() => ctx.storage.setAlarm(at)),
-			clearAlarm: Effect.promise(() => ctx.storage.deleteAlarm()),
-			flush: Effect.promise(() => ctx.storage.sync()),
+			setAlarm: (at) => storageStep("setAlarm", () => ctx.storage.setAlarm(at)),
+			clearAlarm: storageStep("deleteAlarm", () => ctx.storage.deleteAlarm()),
+			flush: storageStep("sync", () => ctx.storage.sync()),
 			abort: (reason) => Effect.sync(() => ctx.abort(reason)).pipe(Effect.andThen(Effect.never)),
 			background: (effect) =>
 				Effect.contextWith((context: Context.Context<never>) =>

@@ -62,18 +62,18 @@ The Pi harness is a scoped resource. `Effect.acquireRelease` opens it and closes
 ```ts
 const kill = Effect.gen(function* () {
 	const at = yield* now;
-	const running = Option.isSome(store.pending()) && Option.isNone(store.killedAt());
+	const running = Option.isSome(yield* store.pending) && Option.isNone(yield* store.killedAt);
 
 	if (!running) return yield* Effect.fail(new NothingRunning());
 
-	store.recordKill(at);
+	yield* store.recordKill(at);
 
 	const wasBusy = yield* Ref.get(driving);
 
-	store.addEvent(KilledEvent.make({ at, afterBlock: yield* blockCount, wasBusy }));
-	yield* object.setAlarm(at + REVIVE_AFTER_MS);
-	yield* object.flush;
-	yield* broadcast.send(EventsFrame.make({ events: store.events() }));
+	const events = yield* store.addEvent(KilledEvent.make({ at, afterBlock: yield* blockCount, wasBusy }));
+
+	yield* object.setAlarm(at + REVIVE_AFTER_MS).pipe(Effect.andThen(object.flush), Effect.mapError(({ step, reason }) => new KillNotSaved({ reason: `${step}: ${reason}` })));
+	yield* broadcast.send(EventsFrame.make({ events }));
 	yield* broadcast.send(KilledFrame.make({ killedAt: at }));
 
 	return yield* object.abort(KILLED_FROM_THE_UI);
@@ -118,7 +118,7 @@ Durable Object "Agent", one per conversation, an Effect ManagedRuntime
 
 ### What happens when you press Kill it
 
-1. The object records the kill in storage (the time, and where in the transcript it happened). It counts one more life and sets an alarm for one second later. A Kill that reaches the same instance while a kill is pending does nothing. A Kill that arrives after the comeback is a new kill: three quick clicks can cost the agent up to three lives, and it still finishes.
+1. The object records the kill in storage (the time, and where in the transcript it happened). It counts one more life and sets an alarm for one second later. A Kill that reaches the same instance while a kill is pending is refused with `NothingRunning`. A Kill that arrives after the comeback is a new kill: three quick clicks can cost the agent up to three lives, and it still finishes.
 2. It awaits `storage.sync()`, so that record cannot be lost. Only then does it tell open tabs about the kill, and call `ctx.abort()`.
 3. The runtime discards the instance. Everything in memory is gone: the in-flight model call, the open WebSockets, and any unsaved work.
 4. The next event for the object gets a fresh instance. That event is the alarm or the page reconnecting, whichever comes first. The fresh instance reads the same SQLite, finds the unfinished request, records a comeback, and submits the request again under the same ID.
@@ -254,6 +254,7 @@ The Worker also refuses writes and WebSocket connections from other origins, so 
 | `worker/vendor/` | A generated copy of Pi's Durable Object SQLite adapter |
 | `client/src/` | The Foldkit app and its story tests |
 | `test/conformance/` | Pi Durable's storage suite, run inside workerd |
+| `test/revival/` | The real agent with a fake model, killed three times inside workerd, offline |
 | `scripts/` | The check script, the five-kill run, and the two vendoring scripts |
 
 ### Design notes

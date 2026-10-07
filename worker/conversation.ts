@@ -12,6 +12,7 @@ import {
 	KILLED_FROM_THE_UI,
 	type Live,
 	LiveFrame,
+	KillNotSaved,
 	NothingRunning,
 	ResumedEvent,
 	RevivedFrame,
@@ -41,7 +42,7 @@ type LiveState = { readonly value: Option.Option<PiLiveState>; readonly changedA
 export type Conversation = {
 	readonly snapshot: Effect.Effect<Snapshot>;
 	readonly send: (text: string) => Effect.Effect<{ readonly id: string }, StillWorking>;
-	readonly kill: Effect.Effect<void, NothingRunning>;
+	readonly kill: Effect.Effect<void, NothingRunning | KillNotSaved>;
 	readonly readFile: (path: string) => Effect.Effect<string, FileNotFound | FilesUnavailable>;
 	readonly keepAlive: Effect.Effect<void>;
 };
@@ -101,7 +102,7 @@ export class ConversationAgent extends Context.Service<ConversationAgent, Conver
 					yield* store.clearPending;
 					yield* Ref.set(driving, false);
 					yield* Ref.set(live, { value: Option.none(), changedAt: yield* now });
-					yield* object.clearAlarm;
+					yield* object.clearAlarm.pipe(Effect.catchTag("StorageFailed", (error) => Effect.logWarning("could not clear the watchdog", error.reason)));
 					yield* broadcast.send(BusyFrame.make({ busy: false }));
 					yield* broadcast.send(SnapshotFrame.make({ snapshot: yield* snapshot }));
 				});
@@ -109,13 +110,15 @@ export class ConversationAgent extends Context.Service<ConversationAgent, Conver
 				const runToEnd = (id: string, text: string) =>
 					Effect.gen(function* () {
 						yield* object.setAlarm((yield* now) + WATCHDOG_MS);
-						yield* pi.run(id, text).pipe(
-							Effect.catchTags({
-								RunEnded: ({ status }) => fail(`Run ended: ${status}`),
-								HarnessFailed: ({ step, reason }) => fail(`${step}: ${reason}`),
-							}),
-						);
-					}).pipe(Effect.ensuring(finish));
+						yield* pi.run(id, text);
+					}).pipe(
+						Effect.catchTags({
+							RunEnded: ({ status }) => fail(`Run ended: ${status}`),
+							HarnessFailed: ({ step, reason }) => fail(`${step}: ${reason}`),
+							StorageFailed: ({ step, reason }) => fail(`Storage ${step} failed: ${reason}`),
+						}),
+						Effect.ensuring(finish),
+					);
 
 				const drive = (id: string, text: string) =>
 					Effect.gen(function* () {
@@ -186,8 +189,7 @@ export class ConversationAgent extends Context.Service<ConversationAgent, Conver
 
 					const events = yield* store.addEvent(KilledEvent.make({ at, afterBlock: yield* blockCount, wasBusy }));
 
-					yield* object.setAlarm(at + REVIVE_AFTER_MS);
-					yield* object.flush;
+					yield* object.setAlarm(at + REVIVE_AFTER_MS).pipe(Effect.andThen(object.flush), Effect.mapError(({ step, reason }) => new KillNotSaved({ reason: `${step}: ${reason}` })));
 					yield* broadcast.send(EventsFrame.make({ events }));
 					yield* broadcast.send(KilledFrame.make({ killedAt: at }));
 
@@ -203,7 +205,7 @@ export class ConversationAgent extends Context.Service<ConversationAgent, Conver
 
 				const keepAlive = Effect.gen(function* () {
 					if (Option.isSome(yield* store.pending)) yield* object.setAlarm((yield* now) + WATCHDOG_MS);
-				});
+				}).pipe(Effect.catchTag("StorageFailed", (error) => Effect.logError("could not re-arm the watchdog", error.reason)));
 
 				yield* object.background(Stream.runForEach(pi.live, onLive));
 				yield* object.background(comeBack(yield* revival));

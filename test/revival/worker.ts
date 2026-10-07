@@ -1,9 +1,9 @@
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Option, Schema } from "effect";
 import { Agent, conversationLayer } from "../../worker/agent";
-import { Repo } from "../../worker/files";
+import { PushRejected, Repo } from "../../worker/files";
 import { Model } from "../../worker/harness";
-import { ConversationName, SnapshotJson } from "../../shared/protocol";
+import { ConversationName, KILLED_FROM_THE_UI, SnapshotJson } from "../../shared/protocol";
 
 const KILLS = 3;
 
@@ -34,14 +34,49 @@ export class RevivalAgent extends Agent {
 	}
 }
 
+const rejectingPushes = Layer.succeed(Repo, {
+	list: Effect.succeed([]),
+	read: () => Effect.succeed(Option.none()),
+	log: Effect.succeed([]),
+	write: () => Effect.fail(new PushRejected({ repo: "test", cause: new Error("push rejected by the test") })),
+});
+
+export class RejectingAgent extends Agent {
+	protected override layer(ctx: DurableObjectState) {
+		return conversationLayer(ctx, scripted(), rejectingPushes);
+	}
+}
+
 const decodeSnapshot = Schema.decodeUnknownSync(SnapshotJson);
 
-type Env = { readonly AGENT: DurableObjectNamespace<RevivalAgent> };
+type Env = { readonly AGENT: DurableObjectNamespace<RevivalAgent>; readonly REJECTING: DurableObjectNamespace<RejectingAgent> };
 
 const sleep = (ms: number) => Effect.runPromise(Effect.sleep(ms));
 
+const rejecting = async (env: Env): Promise<Response> => {
+	const name = ConversationName.make(`r-${crypto.randomUUID()}`);
+	const agent = () => env.REJECTING.getByName(name);
+
+	await agent().send(name, "Build a bakery page");
+
+	for (let i = 0; i < 100; i += 1) {
+		await sleep(300);
+		const current = decodeSnapshot(await agent().getSnapshot(name));
+
+		if (!current.busy) {
+			const toolResults = current.blocks.flatMap((block) => (block._tag === "Tool" ? Option.toArray(block.result).map((result) => `${result.isError ? "error" : "ok"}: ${result.line}`) : []));
+
+			return Response.json({ lives: current.lives, files: current.files, commits: current.commits.length, timeline: current.events.map((event) => event._tag), kills: toolResults });
+		}
+	}
+
+	return Response.json({ timedOut: true }, { status: 500 });
+};
+
 export default {
 	async fetch(request, env) {
+		if (new URL(request.url).pathname === "/rejecting") return rejecting(env);
+
 		const name = ConversationName.make(new URL(request.url).searchParams.get("name") ?? "revival");
 		const agent = () => env.AGENT.getByName(name);
 		const snapshot = async () => decodeSnapshot(await agent().getSnapshot(name));
@@ -54,7 +89,7 @@ export default {
 			await sleep(KILL_EVERY_MS);
 			const before = await snapshot().catch(() => undefined);
 
-			kills.push(`${before?.busy ? "busy" : "idle"}:${await agent().kill(name).catch((error: Error) => error.message.slice(0, 40))}`);
+			kills.push(`${before?.busy ? "busy" : "idle"}:${await agent().kill(name).then(() => "returned", (error: Error) => (String(error).includes(KILLED_FROM_THE_UI) ? "aborted" : String(error)))}`);
 		}
 
 		for (let i = 0; i < 100; i += 1) {

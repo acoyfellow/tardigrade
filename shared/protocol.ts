@@ -95,6 +95,8 @@ export class StillWorking extends Schema.TaggedError<StillWorking>()("StillWorki
 
 export class NothingRunning extends Schema.TaggedError<NothingRunning>()("NothingRunning", {}) {}
 
+export class KillNotSaved extends Schema.TaggedError<KillNotSaved>()("KillNotSaved", { reason: Schema.String }) {}
+
 export class AgentUnavailable extends Schema.TaggedError<AgentUnavailable>()("AgentUnavailable", { reason: Schema.String }) {}
 
 export const KILLED_FROM_THE_UI = "killed from the UI";
@@ -107,7 +109,7 @@ export const Accepted = Schema.Struct({ id: Schema.String });
 
 export const SendOutcome = Schema.Result(Accepted, StillWorking);
 
-export const KillOutcome = Schema.Result(Schema.Void, NothingRunning);
+export const KillOutcome = Schema.Result(Schema.Void, Schema.Union([NothingRunning, KillNotSaved]));
 
 export const ReadOutcome = Schema.Result(Schema.String, Schema.Union([FileNotFound, FilesUnavailable]));
 
@@ -120,7 +122,7 @@ const target = { name: ConversationName };
 export const AgentRpcs = RpcGroup.make(
 	Rpc.make("Snapshot", { payload: target, success: Snapshot, error: AgentUnavailable }),
 	Rpc.make("Send", { payload: { ...target, text: Input }, success: Accepted, error: Schema.Union([StillWorking, AgentUnavailable]) }),
-	Rpc.make("Kill", { payload: target, error: Schema.Union([NothingRunning, AgentUnavailable]) }),
+	Rpc.make("Kill", { payload: target, error: Schema.Union([NothingRunning, KillNotSaved, AgentUnavailable]) }),
 	Rpc.make("ReadFile", { payload: { ...target, path: Schema.String }, success: Schema.String, error: Schema.Union([FileNotFound, FilesUnavailable, AgentUnavailable]) }),
 );
 
