@@ -8,7 +8,7 @@ Give it a task, press **Kill it** while it works, and watch. Its Durable Object 
 
 ![Five kills in a row. Each shows Killed, then Back after, and the task still ends with one commit.](docs/kill5.gif)
 
-*Five kills, one every eight seconds, sped up 1.8×. The task still ends with one file and one commit.*
+*Five kills, one every eight seconds, sped up 2.2×. The task still ends with one file and one commit. [Full-quality MP4](docs/kill5.mp4).*
 
 tardigrade is a reference app to fork and run for yourself behind Cloudflare Access. It is not a hosted product, and it is not safe on the open internet: anyone who can open it spends your Workers AI budget.
 
