@@ -14,7 +14,7 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "dev": "vite build --config client/vite.config.ts && wrangler dev --var LOCAL_DEV_WITHOUT_ACCESS:1",
+    "dev": "vite build --config client/vite.config.ts && node scripts/dev.mjs",
     "build": "vite build --config client/vite.config.ts",
     "deploy": "npm run build && wrangler deploy",
     "typecheck": "tsc -p .",

@@ -176,7 +176,7 @@ npm run dev          # http://localhost:8787
 
 Workers AI and Artifacts have no local simulator, so `npm run dev` uses the real services through remote bindings. Local runs spend your Workers AI quota and create real Artifacts repos, one per conversation. For costs, see [Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/) and the [Artifacts docs](https://developers.cloudflare.com/artifacts/).
 
-`npm run dev` skips the Access check, and only for requests to `localhost`, `127.0.0.1`, or `[::1]`. Run one dev server per checkout: two servers on the same `.wrangler/state` folder both run the same Durable Object and corrupt its SQLite.
+`npm run dev` skips the Access check, and only for requests to `localhost`, `127.0.0.1`, or `[::1]`. Run one dev server per checkout: two servers on the same `.wrangler/state` folder both run the same Durable Object and corrupt its SQLite, so `npm run dev` refuses to start a second one.
 
 ```sh
 npm run check                              # typecheck, lint, tests, storage suite in workerd, build, config checks
@@ -214,7 +214,7 @@ Then open your hostname, sign in through Access, and give it a task.
 | `403 Access token rejected: …` (any other reason) | The token is expired, malformed, or from another team. The reason names the failed check. | Sign in again. If it repeats, check `ACCESS_TEAM_DOMAIN`. |
 | A write fails and the agent reports an error | Artifacts is not enabled, or the push was rejected twice in a row (a push is retried once). | Enable Artifacts, then send the task again. |
 | **Working** for a long time | The model or Artifacts is slow. The watchdog revives a dead instance within 15 seconds, but it does not cancel a slow live one. | Press **Kill it**. The comeback resumes the task. |
-| Locally, a conversation stops loading with `unresolvable path: ["generation"]` | Two `wrangler dev` servers shared one `.wrangler/state` folder, so two copies of the same Durable Object wrote to one SQLite file. That cannot happen on Cloudflare, where each object runs once. | Run one dev server per folder, or give each its own `--persist-to`. Press **New** for a fresh conversation. |
+| Locally, a conversation stops loading with `unresolvable path: ["generation"]` | Two `wrangler dev` servers shared one `.wrangler/state` folder, so two copies of the same Durable Object wrote to one SQLite file. That cannot happen on Cloudflare, where each object runs once. | `npm run dev` refuses to start a second server on the same folder. If you start `wrangler dev` by hand, give each server its own `--persist-to`. Press **New** for a fresh conversation. |
 
 The Worker also refuses writes and WebSocket connections from other origins, so another site cannot drive your agent through your signed-in browser.
 
