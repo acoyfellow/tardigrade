@@ -4,11 +4,11 @@ import { Meta } from "./meta";
 
 export class StorageFailed extends Schema.TaggedError<StorageFailed>()("StorageFailed", { step: Schema.String, reason: Schema.String }) {}
 
-export class SocketSendFailed extends Schema.TaggedError<SocketSendFailed>()("SocketSendFailed", { reason: Schema.String }) {}
+class SocketSendFailed extends Schema.TaggedError<SocketSendFailed>()("SocketSendFailed", { reason: Schema.String }) {}
 
 const encodeFrame = Schema.encodeSync(ServerFrameJson);
 
-export type ObjectState = {
+type ObjectState = {
 	readonly sockets: () => ReadonlyArray<WebSocket>;
 	readonly setAlarm: (at: number) => Effect.Effect<void, StorageFailed>;
 	readonly clearAlarm: Effect.Effect<void, StorageFailed>;
@@ -35,7 +35,7 @@ export class DurableObjectContext extends Context.Service<DurableObjectContext, 
 		});
 }
 
-export type StoredState = {
+type StoredState = {
 	readonly name: Effect.Effect<ConversationName>;
 	readonly pending: Effect.Effect<Option.Option<string>>;
 	readonly setPending: (encoded: string) => Effect.Effect<void>;
@@ -75,7 +75,7 @@ const sendTo = (socket: WebSocket, data: string) =>
 		Effect.catchTag("SocketSendFailed", () => Effect.sync(() => socket.close(1011, "send failed"))),
 	);
 
-export type Broadcaster = {
+type Broadcaster = {
 	readonly send: (frame: ServerFrame) => Effect.Effect<void>;
 	readonly sendTo: (socket: WebSocket, frame: ServerFrame) => Effect.Effect<void>;
 };

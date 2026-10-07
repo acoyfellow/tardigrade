@@ -8,9 +8,7 @@ import { routeWorkersAIThroughBinding } from "./model";
 import { Meta } from "./meta";
 import { Broadcast, DurableObjectContext, Store } from "./services";
 
-export const DEFAULT_MODEL = "@cf/zai-org/glm-5.3";
-
-export type AgentEnv = { readonly AI: Ai; readonly ARTIFACTS: Artifacts; readonly MODEL?: string };
+export type AgentEnv = { readonly AI: Ai; readonly ARTIFACTS: Artifacts; readonly MODEL: string };
 
 const encodeSnapshot = Schema.encodeSync(SnapshotJson);
 
@@ -31,7 +29,7 @@ export const conversationLayer = (ctx: DurableObjectState, model: Layer.Layer<Mo
 };
 
 const layerFor = (ctx: DurableObjectState, env: AgentEnv, name: ConversationName) =>
-	conversationLayer(ctx, Model.workersAI(env.MODEL ?? DEFAULT_MODEL), Repo.layer(env.ARTIFACTS, `tg-${name}`));
+	conversationLayer(ctx, Model.workersAI(env.MODEL), Repo.layer(env.ARTIFACTS, `tg-${name}`));
 
 const RESERVED_CLOSE_CODES = new Set([1005, 1006, 1015]);
 

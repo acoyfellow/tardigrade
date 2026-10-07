@@ -2,8 +2,6 @@ import { readFileSync } from "node:fs";
 
 const readme = readFileSync("README.md", "utf8");
 
-const SOURCES = ["worker/agent.ts", "worker/conversation.ts", "worker/harness.ts", "worker/services.ts", "client/src/story.test.ts", "client/src/update.ts"];
-
 const normalized = (text) =>
 	text
 		.split("\n")
@@ -11,14 +9,18 @@ const normalized = (text) =>
 		.filter((line) => line !== "")
 		.join("\n");
 
-const sources = normalized(SOURCES.map((path) => readFileSync(path, "utf8")).join("\n"));
+const linkedSource = (offset) => {
+	const links = [...readme.slice(0, offset).matchAll(/\]\(([^)#\s]+\.ts)[^)]*\)/g)];
 
-const blocks = [...readme.matchAll(/```ts\n([\s\S]*?)```/g)].map((match) => match[1]);
+	return links.at(-1)?.[1];
+};
 
-const drifted = blocks.filter((block) => !sources.includes(normalized(block)));
+const excerpts = [...readme.matchAll(/```ts\n([\s\S]*?)```/g)].map((match) => ({ code: match[1], source: linkedSource(match.index) }));
 
-for (const block of drifted) console.error(`README excerpt is not in the source:\n${block.split("\n").slice(0, 3).join("\n")}\n`);
+const drifted = excerpts.filter(({ code, source }) => source === undefined || !normalized(readFileSync(source, "utf8")).includes(normalized(code)));
 
-console.log(`${blocks.length - drifted.length} of ${blocks.length} README excerpts match the source`);
+for (const { code, source } of drifted) console.error(`README excerpt is not in ${source ?? "any linked file"}:\n${code.split("\n").slice(0, 3).join("\n")}\n`);
+
+console.log(`${excerpts.length - drifted.length} of ${excerpts.length} README excerpts match the file linked above them`);
 
 process.exit(drifted.length === 0 ? 0 : 1);

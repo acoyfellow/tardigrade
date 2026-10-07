@@ -8,7 +8,7 @@ Give it a task and press **Kill it** while it works. Its Durable Object calls `c
 
 ![Five kills in a row. Each shows Killed, then Back after, and the task still ends with one commit.](docs/kill5.gif)
 
-*A real run: five kills, about one every ten seconds. The kills play at 1.6×, the rest at 4×. It ends with 6 lives, one file, and one commit. [MP4](docs/kill5.mp4).*
+*A real run: five kills, about one every 9.5 seconds. The kills play at 1.6×, the rest at 4×. It ends with 6 lives, one file, and one commit. [MP4](docs/kill5.mp4).*
 
 tardigrade is a reference app to read and fork, and to run for yourself behind Cloudflare Access. It is not a hosted product, and it is not safe on the open internet: anyone who can open it spends your Workers AI budget.
 
@@ -142,7 +142,7 @@ A task can end with one extra commit. It does not end with lost work. tardigrade
 
 ### Kill it five times
 
-`npm run kill5` sends a task, kills the agent five times (it waits `KILL_EVERY_MS`, 7 seconds by default, then kills, then checks for 2.5 seconds: about one kill every 9.5 seconds), and waits. It passes only if all of these are true:
+`npm run kill5` sends a task, kills the agent five times (it waits `KILL_EVERY_MS`, 7 seconds by default, then kills, then checks for 2.5 seconds: about one kill every 9.5 seconds), and waits. If the task finishes before all five kills, the run fails: use a longer `TASK` or a shorter `KILL_EVERY_MS`. It passes only if all of these are true:
 
 - There are 6 lives.
 - The task finished.
@@ -152,6 +152,7 @@ A task can end with one extra commit. It does not end with lost work. tardigrade
 A real run against `npm run dev`:
 
 ```
+c-…
 send Success
 kill 1: lives=2 busy=true
 kill 2: lives=3 busy=true
@@ -197,7 +198,7 @@ Workers AI and Artifacts have no local simulator, so `npm run dev` uses the real
 `npm run dev` skips the Access check, and only for requests to `localhost`, `127.0.0.1`, or `[::1]`. Run one dev server per checkout: two servers on the same `.wrangler/state` folder both run the same Durable Object and corrupt its SQLite, so `npm run dev` refuses to start a second one.
 
 ```sh
-npm run check                              # typecheck, lint, tests, storage suite in workerd, build, config checks
+npm run check                              # typecheck, lint, tests (stories, storage suite, offline revival), README excerpt check, build, config and secret checks
 BASE=http://localhost:8787 npm run check   # the same, plus the five-kill run
 ```
 

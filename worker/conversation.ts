@@ -14,7 +14,7 @@ import {
 	LiveFrame,
 	KillNotSaved,
 	NothingRunning,
-	ResumedEvent,
+	RestartedEvent,
 	RevivedFrame,
 	type Snapshot,
 	SnapshotFrame,
@@ -151,7 +151,7 @@ export class ConversationAgent extends Context.Service<ConversationAgent, Conver
 					const comeback: Option.Option<TimelineEvent> = Option.isSome(killedAt)
 						? Option.some(BackEvent.make({ at, afterBlock, afterMs: at - killedAt.value, lives, resumed: Option.isSome(pending) }))
 						: Option.isSome(pending)
-							? Option.some(ResumedEvent.make({ at, afterBlock, lives }))
+							? Option.some(RestartedEvent.make({ at, afterBlock, lives }))
 							: Option.none();
 
 					const events = Option.isSome(comeback) ? yield* store.addEvent(comeback.value) : [];

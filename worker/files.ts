@@ -28,7 +28,7 @@ export class PushRejected extends Schema.TaggedError<PushRejected>()("PushReject
 	cause: Schema.Defect(),
 }) {}
 
-export type WriteResult = { readonly oid: string; readonly changed: boolean };
+type WriteResult = { readonly oid: string; readonly changed: boolean };
 
 type Credentials = { readonly remote: string; readonly secret: string; readonly expiresAt: number; readonly fresh: boolean };
 

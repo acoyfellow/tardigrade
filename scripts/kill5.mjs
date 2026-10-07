@@ -54,7 +54,12 @@ for (let kill = 1; kill <= KILLS; kill += 1) {
 		break;
 	}
 
-	await rpc("Kill", {}).catch(() => null);
+	const killed = await rpc("Kill", {}).then(
+		() => "ok",
+		(error) => `failed: ${error.message}`,
+	);
+
+	if (killed !== "ok") console.log(`kill ${kill} ${killed}`);
 	await sleep(2500);
 
 	const after = await snapshotOrNull();

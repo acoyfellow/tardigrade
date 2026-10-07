@@ -4,7 +4,7 @@ export type AccessConfig = { readonly teamDomain: string; readonly audience: str
 
 export class AccessDenied extends Schema.TaggedError<AccessDenied>()("AccessDenied", { reason: Schema.String }) {}
 
-export const ACCESS_HEADER = "Cf-Access-Jwt-Assertion";
+const ACCESS_HEADER = "Cf-Access-Jwt-Assertion";
 
 const CLOCK_SKEW_SECONDS = 60;
 
@@ -42,7 +42,7 @@ const decodeKeySet = Schema.decodeUnknownEffect(KeySet);
 
 const decodeSigningKey = Schema.decodeUnknownOption(SigningKey);
 
-export type AccessIdentity = { readonly email: Option.Option<string>; readonly subject: string };
+type AccessIdentity = { readonly email: Option.Option<string>; readonly subject: string };
 
 const fromBase64Url = (value: string): Uint8Array<ArrayBuffer> => {
 	const padded = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(value.length / 4) * 4, "=");

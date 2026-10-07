@@ -2,7 +2,7 @@ import { Match, Option } from "effect";
 import type { Live } from "../../../shared/protocol";
 import { type Model, Phase } from "../model";
 
-export type ActivityRow = { readonly visible: boolean; readonly dead: boolean; readonly label: string };
+type ActivityRow = { readonly visible: boolean; readonly dead: boolean; readonly label: string };
 
 const liveLabel = (live: Live): string =>
 	Match.value(live.activity).pipe(

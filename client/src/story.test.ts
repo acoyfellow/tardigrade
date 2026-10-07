@@ -7,7 +7,7 @@ import {
 	ConversationName,
 	EventsFrame,
 	KilledEvent,
-	ResumedEvent,
+	RestartedEvent,
 	KilledFrame,
 	ReplyBlock,
 	RevivedFrame,
@@ -206,7 +206,7 @@ describe("kill and revival", () => {
 	});
 
 	test("a restart without a kill shows as a Restarted line and keeps working", () => {
-		const restarted = ResumedEvent.make({ at: 9_000, afterBlock: 1, lives: 2 });
+		const restarted = RestartedEvent.make({ at: 9_000, afterBlock: 1, lives: 2 });
 
 		story(
 			update,

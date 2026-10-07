@@ -8,7 +8,7 @@ import { type Model, OpenFile, Phase } from "./model";
 import type { AgentClient } from "./rpc";
 import { activityKey } from "./view/activity";
 
-export type UpdateReturn = Update.Return<Model, Message, AgentClient>;
+type UpdateReturn = Update.Return<Model, Message, AgentClient>;
 
 type AnyCommand = Command.Command<Message, never, AgentClient>;
 

@@ -47,9 +47,9 @@ export const BackEvent = Schema.TaggedStruct("Back", { at: Schema.Number, afterB
 
 export const FailedEvent = Schema.TaggedStruct("Failed", { at: Schema.Number, afterBlock: Schema.Number, reason: Schema.String });
 
-export const ResumedEvent = Schema.TaggedStruct("Resumed", { at: Schema.Number, afterBlock: Schema.Number, lives: Schema.Number });
+export const RestartedEvent = Schema.TaggedStruct("Resumed", { at: Schema.Number, afterBlock: Schema.Number, lives: Schema.Number });
 
-export const TimelineEvent = Schema.Union([KilledEvent, BackEvent, ResumedEvent, FailedEvent]);
+export const TimelineEvent = Schema.Union([KilledEvent, BackEvent, RestartedEvent, FailedEvent]);
 
 export type TimelineEvent = typeof TimelineEvent.Type;
 
@@ -105,17 +105,17 @@ export class FilesUnavailable extends Schema.TaggedError<FilesUnavailable>()("Fi
 
 export class FileNotFound extends Schema.TaggedError<FileNotFound>()("FileNotFound", { path: Schema.String }) {}
 
-export const Accepted = Schema.Struct({ id: Schema.String });
+const Accepted = Schema.Struct({ id: Schema.String });
 
-export const SendOutcome = Schema.Result(Accepted, StillWorking);
+const SendOutcome = Schema.Result(Accepted, StillWorking);
 
-export const KillOutcome = Schema.Result(Schema.Void, Schema.Union([NothingRunning, KillNotSaved]));
+const KillOutcome = Schema.Result(Schema.Void, Schema.Union([NothingRunning, KillNotSaved]));
 
-export const ReadOutcome = Schema.Result(Schema.String, Schema.Union([FileNotFound, FilesUnavailable]));
+const ReadOutcome = Schema.Result(Schema.String, Schema.Union([FileNotFound, FilesUnavailable]));
 
-export const MAX_INPUT = 8000;
+const MAX_INPUT = 8000;
 
-export const Input = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_INPUT));
+const Input = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_INPUT));
 
 const target = { name: ConversationName };
 

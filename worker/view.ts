@@ -39,9 +39,9 @@ const ToolResultMessage = Schema.Struct({
 
 const SystemMessage = Schema.Struct({ role: Schema.Literal("system") });
 
-export const PiMessage = Schema.Union([UserMessage, AssistantMessage, ToolResultMessage, SystemMessage]);
+const PiMessage = Schema.Union([UserMessage, AssistantMessage, ToolResultMessage, SystemMessage]);
 
-export type PiMessage = typeof PiMessage.Type;
+type PiMessage = typeof PiMessage.Type;
 
 type AssistantMessage = typeof AssistantMessage.Type;
 

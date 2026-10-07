@@ -11,7 +11,7 @@ import { Broadcast } from "./services";
 import { openDurableObjectSqliteStorage } from "./vendor/pi-durable-do-sqlite";
 import { decodePiLiveState, decodePiMessages, type PiLiveState, toBlocks } from "./view";
 
-export const CONTEXT = BACKGROUND_CONTEXT;
+const CONTEXT = BACKGROUND_CONTEXT;
 
 const HISTORY_LIMIT = 500;
 
@@ -30,7 +30,7 @@ const pi = <A>(step: string, run: () => Promise<A>) => Effect.tryPromise({ try: 
 
 const text = (value: string) => ({ content: [{ type: "text" as const, text: value }] });
 
-export type FilesChanged = (repo: RepoFiles) => Effect.Effect<void>;
+type FilesChanged = (repo: RepoFiles) => Effect.Effect<void>;
 
 type ToolFailure = InvalidPath | RepoUnavailable | PushRejected;
 
@@ -88,7 +88,7 @@ const tools = (repo: RepoFiles, filesChanged: FilesChanged, context: Context.Con
 	];
 };
 
-export type Agentic = {
+type Agentic = {
 	readonly repo: RepoFiles;
 	readonly live: Stream.Stream<Option.Option<PiLiveState>>;
 	readonly blocks: Effect.Effect<ReadonlyArray<Block>, HarnessFailed>;
@@ -96,7 +96,7 @@ export type Agentic = {
 	readonly filesChanged: FilesChanged;
 };
 
-export type ModelChoice = { readonly provider: Provider; readonly modelId: string; readonly options: CreateModelsOptions };
+type ModelChoice = { readonly provider: Provider; readonly modelId: string; readonly options: CreateModelsOptions };
 
 export class Model extends Context.Service<Model, ModelChoice>()("tardigrade/Model") {
 	static readonly workersAI = (modelId: string) => Layer.succeed(Model, { provider: cloudflareWorkersAIProvider(), modelId, options: { authContext: bindingAuthContext } });
