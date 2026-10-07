@@ -2,11 +2,18 @@ import { Context, Effect, Layer, Option, Schema } from "effect";
 import { HttpRouter } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import { AgentRpcs, ConversationName, KillOutcomeJson, ReadOutcomeJson, RPC_PATH, SendOutcomeJson, SnapshotJson } from "../shared/protocol";
+import { accessConfig, accessToken, verifyAccessToken } from "./access";
 import { Agent, type AgentEnv } from "./agent";
 
 export { Agent };
 
-type Env = AgentEnv & { readonly AGENT: DurableObjectNamespace<Agent>; readonly ASSETS: Fetcher };
+type Env = AgentEnv & {
+	readonly AGENT: DurableObjectNamespace<Agent>;
+	readonly ASSETS: Fetcher;
+	readonly ACCESS_TEAM_DOMAIN?: string;
+	readonly ACCESS_AUD?: string;
+	readonly LOCAL_DEV_WITHOUT_ACCESS?: string;
+};
 
 const SOCKET_ROUTE = /^\/api\/c\/([^/]+)\/ws$/;
 
@@ -94,8 +101,37 @@ const page = (request: Request, env: Env, rawName: string): Promise<Response> =>
 		onSome: () => env.ASSETS.fetch(new Request(new URL("/", request.url), request)),
 	});
 
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+const isLocalDev = (request: Request, env: Env): boolean => env.LOCAL_DEV_WITHOUT_ACCESS === "1" && LOCAL_HOSTS.has(new URL(request.url).hostname);
+
+const NOT_CONFIGURED = "tardigrade is locked: set ACCESS_TEAM_DOMAIN and ACCESS_AUD and put the hostname behind Cloudflare Access. See README, Deploy.";
+
+const admit = (request: Request, env: Env): Promise<Option.Option<Response>> => {
+	if (isLocalDev(request, env)) return Promise.resolve(Option.none());
+
+	return Option.match(accessConfig(env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUD), {
+		onNone: () => Promise.resolve(Option.some(refuse(503, NOT_CONFIGURED))),
+		onSome: (config) =>
+			Option.match(accessToken(request), {
+				onNone: () => Promise.resolve(Option.some(refuse(401, "sign in through Cloudflare Access"))),
+				onSome: (token) =>
+					Effect.runPromise(
+						verifyAccessToken(config, token).pipe(
+							Effect.as(Option.none()),
+							Effect.catchTag("AccessDenied", ({ reason }) => Effect.succeed(Option.some(refuse(403, `Access token rejected: ${reason}`)))),
+						),
+					),
+			}),
+	});
+};
+
 export default {
 	async fetch(request, env) {
+		const denied = await admit(request, env);
+
+		if (Option.isSome(denied)) return denied.value;
+
 		const { pathname } = new URL(request.url);
 		const isWrite = request.method !== "GET" || request.headers.get("Upgrade") === "websocket";
 

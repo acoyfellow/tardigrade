@@ -12,7 +12,9 @@
 	],
 	// MODEL is any Workers AI model with function calling.
 	"vars": {
-		"MODEL": "@cf/zai-org/glm-5.3"
+		"MODEL": "@cf/zai-org/glm-5.3",
+		"ACCESS_TEAM_DOMAIN": "",
+		"ACCESS_AUD": ""
 	},
 	// Workers AI and Artifacts have no local simulator: `wrangler dev` calls the real services.
 	"ai": {
@@ -30,9 +32,7 @@
 		"directory": "./client/dist",
 		"binding": "ASSETS",
 		"not_found_handling": "single-page-application",
-		"run_worker_first": [
-			"/api/*"
-		]
+		"run_worker_first": true
 	},
 	"durable_objects": {
 		"bindings": [

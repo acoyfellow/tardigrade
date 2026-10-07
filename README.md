@@ -6,7 +6,7 @@
 
 tardigrade is a small coding agent on Cloudflare. Give it a task, press **Kill it** partway through, and it comes back and finishes. You keep the conversation, the files and the live view.
 
-![tardigrade climbs back out and follows its checkpoints home](docs/hero.jpg)
+![A glowing tardigrade standing on a purple crystal](docs/hero.jpg)
 
 ```
 browser (Foldkit) ──RPC + WebSocket──▶ Worker (Effect) ──▶ Durable Object (one per conversation)
@@ -29,7 +29,7 @@ You need Node 22+ and a Cloudflare account with Workers AI and [Artifacts](https
 ```sh
 npm install
 npx wrangler login
-npm run dev          # builds the client, then http://localhost:8787
+npm run dev          # builds the client, then http://localhost:8787 (Access check skipped locally)
 ```
 
 Workers AI and Artifacts have no local simulator, so `npm run dev` uses the real services through remote bindings (see `wrangler.jsonc`). That means local runs use your Workers AI quota and create real Artifacts repos, one per conversation.
@@ -43,18 +43,24 @@ The lint is [anti-slop](https://github.com/dmmulroy/anti-slop), vendored into `t
 
 ## Deploy
 
-1. Optionally set `vars.MODEL` to any Workers AI model with function calling. The default is `@cf/zai-org/glm-5.3`, which streams tool arguments, so the page can show a file while it is being written.
-2. Run `npm run deploy`. Wrangler deploys to the account you are logged in to; there is no account ID to configure.
-3. The Worker has no public URL by default (`workers_dev: false`), because anyone who can open it can spend your Workers AI budget. Put it on your own hostname behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-public-app/):
+tardigrade is meant for one person or a small team, not the open internet: anyone who can open it can spend your Workers AI budget and create Artifacts repos. So it is locked by default, and it stays locked until you put it behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-public-app/).
+
+1. Pick a hostname on a zone in your account and add it to `wrangler.jsonc`:
 
    ```jsonc
-   // wrangler.jsonc
    "routes": [{ "pattern": "tardigrade.example.com", "custom_domain": true }]
    ```
 
-   Then add an Access application for that hostname. For a short public demo you can set `workers_dev: true` instead and accept the risk.
+2. In Zero Trust, create a self-hosted Access application for that hostname, with a policy that allows only you (for example, your email address).
+3. Copy two values into `vars` in `wrangler.jsonc`: your team domain (`https://<team>.cloudflareaccess.com`) as `ACCESS_TEAM_DOMAIN`, and the application's Audience (AUD) tag as `ACCESS_AUD`. Neither is a secret.
+4. Optionally set `vars.MODEL` to any Workers AI model with function calling. The default is `@cf/zai-org/glm-5.3`, which streams tool arguments, so the page can show a file while it is being written.
+5. Run `npm run deploy`. Wrangler deploys to the account you are logged in to; there is no account ID to configure.
 
-The Worker only accepts writes and WebSocket connections from its own origin, so another site cannot drive your agent through a visitor's browser.
+The Worker does not trust that Access sits in front of it. Every request, including the page and its images, must carry an Access token that the Worker verifies itself: signed by your team's key, for your application's audience, and not expired. If `ACCESS_TEAM_DOMAIN` or `ACCESS_AUD` is missing, every request gets a 503 that says tardigrade is locked. There is no `workers.dev` or preview URL (`workers_dev: false`, `preview_urls: false`), so the Access hostname is the only way in.
+
+`npm run dev` skips the check with `LOCAL_DEV_WITHOUT_ACCESS=1`, and only for requests to `localhost`, `127.0.0.1`, or `[::1]`. Never set that variable on a deployed Worker.
+
+The Worker also refuses writes and WebSocket connections from other origins, so another site cannot drive your agent through your signed-in browser.
 
 The storage test (`test/conformance/`) starts a real workerd with `wrangler`, opens the adapter on a Durable Object's SQLite, and runs Pi Durable's own storage suite of 23 cases. Pi's tests use a Node SQLite stand-in, so this checks the part that only the real runtime can.
 
@@ -83,7 +89,8 @@ Six lives, one finished file, one commit. Because a cut-off step can run again, 
 | Path | What it does |
 | --- | --- |
 | `shared/protocol.ts` | Schemas for every frame, request, outcome, and error, used by both sides |
-| `worker/index.ts` | Serves the RPC group, checks the origin, and opens the WebSocket to the conversation's Durable Object |
+| `worker/index.ts` | Checks Access on every request, serves the RPC group, checks the origin, and opens the WebSocket to the conversation's Durable Object |
+| `worker/access.ts` | Verifies the Cloudflare Access token: signature against your team's keys, audience, issuer, and expiry |
 | `worker/agent.ts` | The `Agent` Durable Object: harness, tools, kill and revival, WebSocket broadcast |
 | `worker/view.ts` | Turns Pi's messages into the Blocks the page shows |
 | `worker/files.ts`, `worker/memfs.ts` | One Artifacts git repo per conversation, with isomorphic-git on an in-memory filesystem |

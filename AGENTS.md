@@ -16,6 +16,7 @@ Read the README first. These rules keep the repository honest and safe to publis
 - Do not add source comments. Use names, types, and small functions instead.
 - Do not edit `worker/vendor/` or `tools/oxlint/anti-slop/`. They are generated; rerun `npm run vendor:pi-durable` or `npm run vendor:anti-slop`.
 - Keep `workers_dev: false` and `preview_urls: false` in every wrangler config.
+- Every request must pass the Access check in `worker/access.ts`. Do not add routes before it, and do not widen the local-dev bypass beyond loopback hosts.
 - Never commit account IDs, API tokens, or internal hostnames.
 
 ## Honesty in docs

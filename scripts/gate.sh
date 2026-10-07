@@ -23,6 +23,12 @@ for config in wrangler.jsonc test/conformance/wrangler.jsonc; do
 	grep -Eq '"preview_urls":[[:space:]]*false' "$config" || { echo "$config: preview_urls must be false"; exit 1; }
 done
 
+step "the deployed config cannot skip the Access check"
+if grep -q 'LOCAL_DEV_WITHOUT_ACCESS' wrangler.jsonc; then
+	echo "wrangler.jsonc must not set LOCAL_DEV_WITHOUT_ACCESS"
+	exit 1
+fi
+
 step "no private registry in the lockfile"
 others=$(grep -o '"resolved": "https://[^/"]*' package-lock.json | sort -u | grep -v 'registry.npmjs.org' || true)
 [ -z "$others" ] || { echo "unexpected registries: $others"; exit 1; }
