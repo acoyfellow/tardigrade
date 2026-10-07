@@ -77,10 +77,16 @@ const result = {
 	commits: final?.commits.length,
 	files: final?.files,
 	replies: final?.blocks.filter((block) => block._tag === "Reply").length,
+	timeline: final?.events.map((event) => event._tag).join(","),
 };
 
 console.log(JSON.stringify(result));
 
-const passed = result.lives === KILLS + 1 && result.busy === false && result.commits >= 1 && result.files.length >= 1;
+const recordedKills = final?.events.filter((event) => event._tag === "Killed").length;
+
+const recordedComebacks = final?.events.filter((event) => event._tag === "Back").length;
+
+const passed =
+	result.lives === KILLS + 1 && result.busy === false && result.commits >= 1 && result.files.length >= 1 && recordedKills === KILLS && recordedComebacks === KILLS;
 
 process.exit(passed ? 0 : 1);
