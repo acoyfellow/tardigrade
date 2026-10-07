@@ -1,0 +1,55 @@
+README.md
+  s_d58794dec92dc7::t_261c694415b6f7 11,145,155,201
+client/src/story.test.ts
+  s_d58794dec92dc7::t_d2bef170780ad4 10,209
+client/src/update.ts
+  s_d58794dec92dc7::t_e35a3eb7ce63cf 11
+client/src/view/activity.ts
+  s_d58794dec92dc7::t_0c48ac16cf02f2 5
+scripts/check-excerpts.mjs
+  s_d58794dec92dc7::t_743bd50b70023e 12-16,18,20,22,24
+scripts/gate.sh
+  s_d58794dec92dc7::t_0cf18b51fe4085 14,24,40
+scripts/kill5.mjs
+  s_d58794dec92dc7::t_8e0e6923979e07 57-62
+shared/protocol.ts
+  s_d58794dec92dc7::t_501635a9add19e 50,52,108,110,112,114,116,118
+worker/access.ts
+  s_d58794dec92dc7::t_0fed64430a5885 7,45
+worker/agent.ts
+  s_d58794dec92dc7::t_a04ff15cce3360 11,32
+worker/conversation.ts
+  s_6784fb7afda1e6::t_85df56b8f80a36 17,154
+worker/files.ts
+  s_d58794dec92dc7::t_b510be54e90083 31
+worker/harness.ts
+  s_d58794dec92dc7::t_9f4ff200c20a13 14,33,91,99
+worker/services.ts
+  s_d58794dec92dc7::t_05731e323827a4 7,11,38,78
+worker/view.ts
+  s_d58794dec92dc7::t_a1d9106eef92a3 42,44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b7ee3baa1851570a4f9156e77e4e85ec8831b488",
+  "prompts": {},
+  "sessions": {
+    "s_6784fb7afda1e6": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a10baa-6597-763e-b627-841914eb8e2c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jordan Coeyman <jcoeyman@cloudflare.com>"
+    },
+    "s_d58794dec92dc7": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a115e6-5bb3-75ac-b511-2988f1aebfad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jordan Coeyman <jcoeyman@cloudflare.com>"
+    }
+  }
+}
