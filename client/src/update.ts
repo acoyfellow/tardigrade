@@ -55,6 +55,7 @@ const applySnapshot = (model: Model, snapshot: Snapshot): Model =>
 		live: () => snapshot.live,
 		files: () => snapshot.files,
 		commits: () => snapshot.commits,
+		filesError: () => snapshot.filesError,
 		events: () => snapshot.events,
 		localNotes: () => [],
 		phase: () => phaseFor(snapshot, model.connected),
@@ -73,7 +74,6 @@ const onFrame = (model: Model, frame: ServerFrame): UpdateReturn => {
 			Busy: ({ busy }) => settlePhase(busy ? model : modifyFields(model, { live: () => Option.none() }), busy),
 			Killed: ({ killedAt }) => markKilled(model, killedAt),
 			Revived: ({ lives }) => modifyFields(model, { lives: () => lives }),
-			RunFailed: () => model,
 			Events: ({ events }) => modifyFields(model, { events: () => events }),
 		}),
 	);

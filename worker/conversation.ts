@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect";
+import { Context, Effect, Layer, Option, Ref, Result, Schema, Stream } from "effect";
 import {
 	BackEvent,
 	BlocksFrame,
@@ -6,6 +6,7 @@ import {
 	EventsFrame,
 	FailedEvent,
 	FileNotFound,
+	FilesUnavailable,
 	KilledEvent,
 	KilledFrame,
 	KILLED_FROM_THE_UI,
@@ -14,7 +15,6 @@ import {
 	NothingRunning,
 	ResumedEvent,
 	RevivedFrame,
-	RunFailedFrame,
 	type Snapshot,
 	SnapshotFrame,
 	StillWorking,
@@ -42,13 +42,13 @@ export type Conversation = {
 	readonly snapshot: Effect.Effect<Snapshot>;
 	readonly send: (text: string) => Effect.Effect<{ readonly id: string }, StillWorking>;
 	readonly kill: Effect.Effect<void, NothingRunning>;
-	readonly readFile: (path: string) => Effect.Effect<string, FileNotFound>;
+	readonly readFile: (path: string) => Effect.Effect<string, FileNotFound | FilesUnavailable>;
 	readonly keepAlive: Effect.Effect<void>;
 };
 
-export class Agent extends Context.Service<Agent, Conversation>()("tardigrade/Agent") {
+export class ConversationAgent extends Context.Service<ConversationAgent, Conversation>()("tardigrade/ConversationAgent") {
 	static readonly layer = Layer.effect(
-			Agent,
+			ConversationAgent,
 			Effect.gen(function* () {
 				const object = yield* DurableObjectContext;
 				const store = yield* Store;
@@ -69,37 +69,36 @@ export class Agent extends Context.Service<Agent, Conversation>()("tardigrade/Ag
 					return Option.map(state.value, (value): Live => toLive(value, at - state.changedAt));
 				});
 
-				const record = (event: TimelineEvent) => broadcast.send(EventsFrame.make({ events: store.addEvent(event) }));
+				const record = (event: TimelineEvent) => Effect.flatMap(store.addEvent(event), (events) => broadcast.send(EventsFrame.make({ events })));
 
 				const pushFiles = pi.filesChanged;
 
 				const snapshot: Effect.Effect<Snapshot> = Effect.gen(function* () {
-					const [all, files, commits] = yield* Effect.all([blocks, pi.repo.list.pipe(Effect.orElseSucceed(() => [])), pi.repo.log.pipe(Effect.orElseSucceed(() => []))], {
-						concurrency: "unbounded",
-					});
+					const [all, repo] = yield* Effect.all([blocks, Effect.result(Effect.all({ files: pi.repo.list, commits: pi.repo.log }))], { concurrency: "unbounded" });
+					const { files, commits } = Result.getOrElse(repo, () => ({ files: [], commits: [] }));
 
 					return {
-						name: store.name(),
+						name: yield* store.name,
 						model,
-						lives: store.lives(),
+						lives: yield* store.lives,
 						busy: yield* Ref.get(driving),
 						blocks: all,
 						live: yield* liveView,
 						files,
 						commits,
-						events: store.events(),
-						killedAt: store.killedAt(),
+						events: yield* store.events,
+						killedAt: yield* store.killedAt,
+						filesError: Result.match(repo, { onSuccess: () => Option.none(), onFailure: (error) => Option.some(`Files are unavailable: ${error._tag}`) }),
 					};
 				});
 
 				const fail = (reason: string) =>
 					Effect.gen(function* () {
 						yield* record(FailedEvent.make({ at: yield* now, afterBlock: yield* blockCount, reason }));
-						yield* broadcast.send(RunFailedFrame.make({ reason }));
 					});
 
 				const finish = Effect.gen(function* () {
-					store.clearPending();
+					yield* store.clearPending;
 					yield* Ref.set(driving, false);
 					yield* Ref.set(live, { value: Option.none(), changedAt: yield* now });
 					yield* object.clearAlarm;
@@ -138,10 +137,10 @@ export class Agent extends Context.Service<Agent, Conversation>()("tardigrade/Ag
 
 				const revival = Effect.gen(function* () {
 					const at = yield* now;
-					const killedAt = store.takeKill();
-					const pending = store.pending().pipe(Option.flatMap(decodePending));
+					const killedAt = yield* store.takeKill;
+					const pending = Option.flatMap(yield* store.pending, decodePending);
 
-					if (Option.isNone(killedAt) && Option.isSome(pending)) store.recordRestart();
+					if (Option.isNone(killedAt) && Option.isSome(pending)) yield* store.recordRestart;
 
 					return { at, killedAt, pending };
 				});
@@ -153,23 +152,23 @@ export class Agent extends Context.Service<Agent, Conversation>()("tardigrade/Ag
 						const afterBlock = yield* blockCount;
 
 						if (Option.isSome(killedAt)) {
-							yield* record(BackEvent.make({ at, afterBlock, afterMs: at - killedAt.value, lives: store.lives(), resumed: Option.isSome(pending) }));
+							yield* record(BackEvent.make({ at, afterBlock, afterMs: at - killedAt.value, lives: yield* store.lives, resumed: Option.isSome(pending) }));
 						} else {
-							yield* record(ResumedEvent.make({ at, afterBlock, lives: store.lives() }));
+							yield* record(ResumedEvent.make({ at, afterBlock, lives: yield* store.lives }));
 						}
 
-						yield* broadcast.send(RevivedFrame.make({ lives: store.lives() }));
+						yield* broadcast.send(RevivedFrame.make({ lives: yield* store.lives }));
 
 						if (Option.isSome(pending)) yield* drive(pending.value.id, pending.value.text);
 					});
 
 				const send = (text: string) =>
 					Effect.gen(function* () {
-						if (Option.isSome(store.pending())) return yield* Effect.fail(new StillWorking());
+						if (Option.isSome(yield* store.pending)) return yield* Effect.fail(new StillWorking());
 
 						const id = crypto.randomUUID();
 
-						store.setPending(encodePending({ id, text }));
+						yield* store.setPending(encodePending({ id, text }));
 						yield* drive(id, text);
 
 						return { id };
@@ -177,18 +176,19 @@ export class Agent extends Context.Service<Agent, Conversation>()("tardigrade/Ag
 
 				const kill = Effect.gen(function* () {
 					const at = yield* now;
-					const running = Option.isSome(store.pending()) && Option.isNone(store.killedAt());
+					const running = Option.isSome(yield* store.pending) && Option.isNone(yield* store.killedAt);
 
 					if (!running) return yield* Effect.fail(new NothingRunning());
 
-					store.recordKill(at);
+					yield* store.recordKill(at);
 
 					const wasBusy = yield* Ref.get(driving);
 
-					store.addEvent(KilledEvent.make({ at, afterBlock: yield* blockCount, wasBusy }));
+					const events = yield* store.addEvent(KilledEvent.make({ at, afterBlock: yield* blockCount, wasBusy }));
+
 					yield* object.setAlarm(at + REVIVE_AFTER_MS);
 					yield* object.flush;
-					yield* broadcast.send(EventsFrame.make({ events: store.events() }));
+					yield* broadcast.send(EventsFrame.make({ events }));
 					yield* broadcast.send(KilledFrame.make({ killedAt: at }));
 
 					return yield* object.abort(KILLED_FROM_THE_UI);
@@ -197,12 +197,12 @@ export class Agent extends Context.Service<Agent, Conversation>()("tardigrade/Ag
 				const readFile = (path: string) =>
 					pi.repo.read(path).pipe(
 						Effect.catchTag("InvalidPath", () => Effect.succeed(Option.none<string>())),
-						Effect.orElseSucceed(() => Option.none<string>()),
+						Effect.catchTag("RepoUnavailable", (error) => Effect.fail(new FilesUnavailable({ reason: String(error.cause) }))),
 						Effect.flatMap(Option.match({ onSome: Effect.succeed, onNone: () => Effect.fail(new FileNotFound({ path })) })),
 					);
 
 				const keepAlive = Effect.gen(function* () {
-					if (Option.isSome(store.pending())) yield* object.setAlarm((yield* now) + WATCHDOG_MS);
+					if (Option.isSome(yield* store.pending)) yield* object.setAlarm((yield* now) + WATCHDOG_MS);
 				});
 
 				yield* object.background(Stream.runForEach(pi.live, onLive));

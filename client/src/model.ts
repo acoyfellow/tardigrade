@@ -36,6 +36,7 @@ export const Model = Schema.Struct({
 	live: Schema.Option(Live),
 	files: Schema.Array(Schema.String),
 	commits: Schema.Array(Commit),
+	filesError: Schema.Option(Schema.String),
 	events: Schema.Array(TimelineEvent),
 	localNotes: Schema.Array(LocalNote),
 	draft: Schema.String,

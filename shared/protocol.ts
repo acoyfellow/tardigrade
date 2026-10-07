@@ -64,6 +64,7 @@ export const Snapshot = Schema.Struct({
 	commits: Schema.Array(Commit),
 	events: Schema.Array(TimelineEvent),
 	killedAt: Schema.OptionFromNullOr(Schema.Number),
+	filesError: Schema.OptionFromNullOr(Schema.String),
 });
 
 export type Snapshot = typeof Snapshot.Type;
@@ -84,9 +85,7 @@ export const EventsFrame = Schema.TaggedStruct("Events", { events: Schema.Array(
 
 export const RevivedFrame = Schema.TaggedStruct("Revived", { lives: Schema.Number });
 
-export const RunFailedFrame = Schema.TaggedStruct("RunFailed", { reason: Schema.String });
-
-export const ServerFrame = Schema.Union([SnapshotFrame, LiveFrame, BlocksFrame, FilesFrame, BusyFrame, KilledFrame, RevivedFrame, RunFailedFrame, EventsFrame]);
+export const ServerFrame = Schema.Union([SnapshotFrame, LiveFrame, BlocksFrame, FilesFrame, BusyFrame, KilledFrame, RevivedFrame, EventsFrame]);
 
 export type ServerFrame = typeof ServerFrame.Type;
 
@@ -100,6 +99,8 @@ export class AgentUnavailable extends Schema.TaggedError<AgentUnavailable>()("Ag
 
 export const KILLED_FROM_THE_UI = "killed from the UI";
 
+export class FilesUnavailable extends Schema.TaggedError<FilesUnavailable>()("FilesUnavailable", { reason: Schema.String }) {}
+
 export class FileNotFound extends Schema.TaggedError<FileNotFound>()("FileNotFound", { path: Schema.String }) {}
 
 export const Accepted = Schema.Struct({ id: Schema.String });
@@ -108,7 +109,7 @@ export const SendOutcome = Schema.Result(Accepted, StillWorking);
 
 export const KillOutcome = Schema.Result(Schema.Void, NothingRunning);
 
-export const ReadOutcome = Schema.Result(Schema.String, FileNotFound);
+export const ReadOutcome = Schema.Result(Schema.String, Schema.Union([FileNotFound, FilesUnavailable]));
 
 export const MAX_INPUT = 8000;
 
@@ -120,7 +121,7 @@ export const AgentRpcs = RpcGroup.make(
 	Rpc.make("Snapshot", { payload: target, success: Snapshot, error: AgentUnavailable }),
 	Rpc.make("Send", { payload: { ...target, text: Input }, success: Accepted, error: Schema.Union([StillWorking, AgentUnavailable]) }),
 	Rpc.make("Kill", { payload: target, error: Schema.Union([NothingRunning, AgentUnavailable]) }),
-	Rpc.make("ReadFile", { payload: { ...target, path: Schema.String }, success: Schema.String, error: Schema.Union([FileNotFound, AgentUnavailable]) }),
+	Rpc.make("ReadFile", { payload: { ...target, path: Schema.String }, success: Schema.String, error: Schema.Union([FileNotFound, FilesUnavailable, AgentUnavailable]) }),
 );
 
 export type AgentRpcs = typeof AgentRpcs;

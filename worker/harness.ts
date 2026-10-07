@@ -33,7 +33,7 @@ const text = (value: string) => ({ content: [{ type: "text" as const, text: valu
 export type FilesChanged = (repo: RepoFiles) => Effect.Effect<void>;
 
 const tools = (repo: RepoFiles, filesChanged: FilesChanged, context: Context.Context<never>) => {
-	const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromiseWith(context)(effect.pipe(Effect.withSpan("pi.tool")));
+	const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromiseWith(context)(effect);
 
 	return [
 		defineTool({
@@ -147,7 +147,6 @@ export class Pi extends Context.Service<Pi, Agentic>()("tardigrade/Pi") {
 					pi("submit", () => conversation.submit({ type: "input", content: input, requestId }, CONTEXT)).pipe(
 						Effect.flatMap((submission) => pi("wait", () => submission.wait(CONTEXT))),
 						Effect.flatMap((settled) => (settled.status === "done" ? Effect.void : Effect.fail(new RunEnded({ status: settled.status })))),
-						Effect.withSpan("pi.run", { attributes: { requestId } }),
 					);
 
 				harness.resume();

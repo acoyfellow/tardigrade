@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Schema } from "effect";
-import { type ConversationName, KillOutcomeJson, ReadOutcomeJson, SendOutcomeJson, SnapshotFrame, SnapshotJson } from "../shared/protocol";
-import { Agent as Conversation } from "./conversation";
+import { type ConversationName, KillOutcomeJson, ReadOutcomeJson, SendOutcomeJson, ServerFrameJson, SnapshotFrame, SnapshotJson } from "../shared/protocol";
+import { ConversationAgent } from "./conversation";
 import { Repo, type RepoUnavailable } from "./files";
 import { type HarnessFailed, Model, Pi } from "./harness";
 import { routeWorkersAIThroughBinding } from "./model";
@@ -14,6 +14,8 @@ export type AgentEnv = { readonly AI: Ai; readonly ARTIFACTS: Artifacts; readonl
 
 const encodeSnapshot = Schema.encodeSync(SnapshotJson);
 
+const encodeFrame = Schema.encodeSync(ServerFrameJson);
+
 const encodeSend = Schema.encodeSync(SendOutcomeJson);
 
 const encodeKill = Schema.encodeSync(KillOutcomeJson);
@@ -25,7 +27,7 @@ export const conversationLayer = (ctx: DurableObjectState, model: Layer.Layer<Mo
 	const broadcast = Broadcast.layer.pipe(Layer.provideMerge(object));
 	const pi = Pi.layer(ctx.storage).pipe(Layer.provide(files), Layer.provideMerge(model), Layer.provideMerge(broadcast));
 
-	return Conversation.layer.pipe(Layer.provideMerge(pi));
+	return ConversationAgent.layer.pipe(Layer.provideMerge(pi));
 };
 
 const layerFor = (ctx: DurableObjectState, env: AgentEnv, name: ConversationName) =>
@@ -35,11 +37,11 @@ const RESERVED_CLOSE_CODES = new Set([1005, 1006, 1015]);
 
 const sendableCloseCode = (code: number): number => (RESERVED_CLOSE_CODES.has(code) ? 1000 : code);
 
-type Services = Conversation | Broadcast | Store;
+type Services = ConversationAgent | Broadcast | Store;
 
-const withAgent = <A, E>(use: (agent: Conversation["Service"]) => Effect.Effect<A, E>): Effect.Effect<A, E, Conversation> =>
+const withAgent = <A, E>(use: (agent: ConversationAgent["Service"]) => Effect.Effect<A, E>): Effect.Effect<A, E, ConversationAgent> =>
 	Effect.gen(function* () {
-		return yield* use(yield* Conversation);
+		return yield* use(yield* ConversationAgent);
 	});
 
 export class Agent extends DurableObject<AgentEnv> {
@@ -54,7 +56,7 @@ export class Agent extends DurableObject<AgentEnv> {
 		const runtime = Option.getOrElse(this.runtime, () => {
 			const meta = new Meta(this.ctx.storage);
 
-			Option.map(name, (value) => meta.claimName(value));
+			if (Option.isSome(name)) meta.claimName(name.value);
 
 			const created = ManagedRuntime.make(this.layer(this.ctx, meta.name()));
 
@@ -94,18 +96,11 @@ export class Agent extends DurableObject<AgentEnv> {
 
 	override async fetch(request: Request): Promise<Response> {
 		const name = new Meta(this.ctx.storage).nameFromUrl(request.url);
+		const snapshot = await this.run(name, withAgent((agent) => agent.snapshot));
 		const pair = new WebSocketPair();
 
 		this.ctx.acceptWebSocket(pair[1]);
-		await this.run(
-			name,
-			Effect.gen(function* () {
-				const agent = yield* Conversation;
-				const broadcast = yield* Broadcast;
-
-				yield* broadcast.sendTo(pair[1], SnapshotFrame.make({ snapshot: yield* agent.snapshot }));
-			}),
-		);
+		pair[1].send(encodeFrame(SnapshotFrame.make({ snapshot })));
 
 		return new Response(null, { status: 101, webSocket: pair[0] });
 	}

@@ -89,6 +89,7 @@ export const filesPanel = (h: H, model: Model): Html => {
 		],
 		[
 			heading(h, "Files", ""),
+			...Option.match(model.filesError, { onNone: () => [], onSome: (reason) => [h.p([h.Id("files-error"), h.Class("px-4 py-2 text-[13px] text-bad")], [reason])] }),
 			...Option.match(writing, { onNone: () => [], onSome: (block) => [liveFile(h, block)] }),
 			...(Arr.isReadonlyArrayEmpty(model.files) ? (Option.isNone(writing) ? [none(h, "No files yet.")] : []) : model.files.flatMap((path) => fileRow(h, model, path))),
 			heading(h, "Commits", commitCount === 0 ? "" : String(commitCount)),

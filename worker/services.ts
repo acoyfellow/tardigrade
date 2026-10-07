@@ -1,5 +1,5 @@
 import { Cause, Clock, Context, Effect, Layer, Option, Schema } from "effect";
-import { type ServerFrame, ServerFrameJson } from "../shared/protocol";
+import { type ConversationName, type ServerFrame, ServerFrameJson, type TimelineEvent } from "../shared/protocol";
 import { Meta } from "./meta";
 
 export class SocketSendFailed extends Schema.TaggedError<SocketSendFailed>()("SocketSendFailed", { reason: Schema.String }) {}
@@ -30,8 +30,39 @@ export class DurableObjectContext extends Context.Service<DurableObjectContext, 
 		});
 }
 
-export class Store extends Context.Service<Store, Meta>()("tardigrade/Store") {
-	static readonly layer = (storage: DurableObjectStorage) => Layer.sync(Store, () => new Meta(storage));
+export type StoredState = {
+	readonly name: Effect.Effect<ConversationName>;
+	readonly pending: Effect.Effect<Option.Option<string>>;
+	readonly setPending: (encoded: string) => Effect.Effect<void>;
+	readonly clearPending: Effect.Effect<void>;
+	readonly lives: Effect.Effect<number>;
+	readonly events: Effect.Effect<ReadonlyArray<TimelineEvent>>;
+	readonly addEvent: (event: TimelineEvent) => Effect.Effect<ReadonlyArray<TimelineEvent>>;
+	readonly killedAt: Effect.Effect<Option.Option<number>>;
+	readonly recordKill: (at: number) => Effect.Effect<void>;
+	readonly recordRestart: Effect.Effect<void>;
+	readonly takeKill: Effect.Effect<Option.Option<number>>;
+};
+
+export class Store extends Context.Service<Store, StoredState>()("tardigrade/Store") {
+	static readonly layer = (storage: DurableObjectStorage) =>
+		Layer.sync(Store, () => {
+			const meta = new Meta(storage);
+
+			return {
+				name: Effect.sync(() => meta.name()),
+				pending: Effect.sync(() => meta.pending()),
+				setPending: (encoded) => Effect.sync(() => meta.setPending(encoded)),
+				clearPending: Effect.sync(() => meta.clearPending()),
+				lives: Effect.sync(() => meta.lives()),
+				events: Effect.sync(() => meta.events()),
+				addEvent: (event) => Effect.sync(() => meta.addEvent(event)),
+				killedAt: Effect.sync(() => meta.killedAt()),
+				recordKill: (at) => Effect.sync(() => meta.recordKill(at)),
+				recordRestart: Effect.sync(() => meta.recordRestart()),
+				takeKill: Effect.sync(() => meta.takeKill()),
+			};
+		});
 }
 
 const sendTo = (socket: WebSocket, data: string) =>
@@ -63,5 +94,3 @@ export class Broadcast extends Context.Service<Broadcast, Broadcaster>()("tardig
 }
 
 export const now = Clock.currentTimeMillis;
-
-export const someIf = <A>(holds: boolean, value: A): Option.Option<A> => (holds ? Option.some(value) : Option.none());

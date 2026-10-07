@@ -38,6 +38,7 @@ export const initialModel = ({ name, now }: Flags): Model => ({
 	live: Option.none(),
 	files: [],
 	commits: [],
+	filesError: Option.none(),
 	events: [],
 	localNotes: [],
 	draft: "",

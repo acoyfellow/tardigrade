@@ -37,10 +37,24 @@ const snapshot = (overrides: Partial<Snapshot>): Snapshot => ({
 	commits: [],
 	events: [],
 	killedAt: Option.none(),
+	filesError: Option.none(),
 	...overrides,
 });
 
 const frame = (value: Parameters<typeof Message.ReceivedFrame>[0]["frame"]) => Message.ReceivedFrame({ frame: value });
+
+describe("files", () => {
+	test("when the file store is down, the page says so instead of showing an empty repository", () => {
+		story(
+			update,
+			given(fresh),
+			message(frame(SnapshotFrame.make({ snapshot: snapshot({ filesError: Option.some("Files are unavailable: RepoUnavailable") }) }))),
+			model((current) => {
+				expect(current.filesError).toEqual(Option.some("Files are unavailable: RepoUnavailable"));
+			}),
+		);
+	});
+});
 
 describe("reconnecting", () => {
 	test("each failed connect waits longer, up to ten seconds, and a good connect resets the wait", () => {

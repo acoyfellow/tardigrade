@@ -164,7 +164,7 @@ const make = (artifacts: Artifacts, repo: string) =>
 			yield* Ref.set(loaded, Option.some(fs));
 
 			return fs;
-		}).pipe(loadLock.withPermits(1), Effect.withSpan("repo.load"));
+		}).pipe(loadLock.withPermits(1));
 
 		const readFrom = (fs: MemoryFS, path: string) =>
 			Effect.promise(() => fs.readText(`${DIRECTORY}/${path}`).then(Option.some, () => Option.none<string>()));
@@ -221,7 +221,6 @@ const make = (artifacts: Artifacts, repo: string) =>
 			cleanPath(path).pipe(
 				Effect.flatMap((file) => commitAndPush(file, content, message).pipe(Effect.retry({ times: 1, while: Predicate.isTagged("PushRejected") }))),
 				lock.withPermits(1),
-				Effect.withSpan("repo.write", { attributes: { path } }),
 			);
 
 		return { list, read, log, write };

@@ -22,12 +22,24 @@ Pi Durable commits each model turn and each tool result to the Durable Object's 
 defineTool({
 	name: "write_file",
 	description: "Create or replace a whole file. Each call is one git commit.",
-	parameters: Type.Object({ path: Type.String(), content: Type.String(), message: Type.Optional(Type.String()) }),
+	parameters: Type.Object({
+		path: Type.String(),
+		content: Type.String(),
+		message: Type.Optional(Type.String({ description: "Commit message" })),
+	}),
 	replay: "safe",
 	executionMode: "sequential",
-	execute: (args) => run(repo.write(args.path, args.content, args.message ?? `Write ${args.path}`).pipe(/* … */)),
+	execute: (args) =>
+		run(
+			repo.write(args.path, args.content, args.message ?? `Write ${args.path}`).pipe(
+				Effect.tap(() => filesChanged(repo)),
+				Effect.map(({ oid, changed }) => text(`${changed ? `Committed ${oid.slice(0, 7)}` : "Already up to date"}: ${args.path}`)),
+			),
+		),
 }),
 ```
+
+In Pi Durable, `replay: "safe"` means an interrupted run of the tool may run again on recovery, with the arguments Pi recorded. `write_file` meets that: the same path and content make no new commit. The one extra commit a kill can cost comes from somewhere else. If the kill lands before Pi records the tool call, the model writes that step again, and its new content can differ.
 
 The SQLite adapter that lets Pi Durable use a Durable Object's storage is checked against Pi's own 23-case storage suite inside real workerd ([`test/conformance/`](test/conformance)).
 
@@ -41,7 +53,7 @@ export const conversationLayer = (ctx: DurableObjectState, model: Layer.Layer<Mo
 	const broadcast = Broadcast.layer.pipe(Layer.provideMerge(object));
 	const pi = Pi.layer(ctx.storage).pipe(Layer.provide(files), Layer.provideMerge(model), Layer.provideMerge(broadcast));
 
-	return Conversation.layer.pipe(Layer.provideMerge(pi));
+	return ConversationAgent.layer.pipe(Layer.provideMerge(pi));
 };
 ```
 
@@ -130,7 +142,7 @@ A task can end with one extra commit. It does not end with lost work. tardigrade
 
 ### Kill it five times
 
-`npm run kill5` sends a task, kills the agent five times (one kill about every ten seconds), and waits. It passes only if all of these are true:
+`npm run kill5` sends a task, kills the agent five times (it waits `KILL_EVERY_MS`, 7 seconds by default, then kills, then checks for 2.5 seconds: about one kill every 9.5 seconds), and waits. It passes only if all of these are true:
 
 - There are 6 lives.
 - The task finished.
