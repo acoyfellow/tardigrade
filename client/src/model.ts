@@ -29,6 +29,7 @@ export const Model = Schema.Struct({
 	phase: Phase,
 	connected: Schema.Boolean,
 	connectionEpoch: Schema.Number,
+	failedConnects: Schema.Number,
 	lives: Schema.Number,
 	busy: Schema.Boolean,
 	blocks: Schema.Array(Block),

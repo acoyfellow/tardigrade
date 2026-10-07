@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
-import { createModels } from "@earendil-works/pi-ai/models";
+import { type CreateModelsOptions, createModels, type Provider } from "@earendil-works/pi-ai/models";
 import { cloudflareWorkersAIProvider } from "@earendil-works/pi-ai/providers/cloudflare-workers-ai";
 import { type Conversation, createRegistry, defineExtension, defineTool, Harness, LiveDoc, section } from "@earendil-works/pi-durable";
 import { Context, Effect, Layer, Option, Queue, Schema, Stream } from "effect";
@@ -32,8 +32,8 @@ const text = (value: string) => ({ content: [{ type: "text" as const, text: valu
 
 export type FilesChanged = (repo: RepoFiles) => Effect.Effect<void>;
 
-const tools = (repo: RepoFiles, filesChanged: FilesChanged) => {
-	const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
+const tools = (repo: RepoFiles, filesChanged: FilesChanged, context: Context.Context<never>) => {
+	const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromiseWith(context)(effect.pipe(Effect.withSpan("pi.tool")));
 
 	return [
 		defineTool({
@@ -82,10 +82,17 @@ export type Agentic = {
 	readonly live: Stream.Stream<Option.Option<PiLiveState>>;
 	readonly blocks: Effect.Effect<ReadonlyArray<Block>, HarnessFailed>;
 	readonly run: (requestId: string, input: string) => Effect.Effect<void, HarnessFailed | RunEnded>;
+	readonly filesChanged: FilesChanged;
 };
 
+export type ModelChoice = { readonly provider: Provider; readonly modelId: string; readonly options: CreateModelsOptions };
+
+export class Model extends Context.Service<Model, ModelChoice>()("tardigrade/Model") {
+	static readonly workersAI = (modelId: string) => Layer.succeed(Model, { provider: cloudflareWorkersAIProvider(), modelId, options: { authContext: bindingAuthContext } });
+}
+
 export class Pi extends Context.Service<Pi, Agentic>()("tardigrade/Pi") {
-	static readonly layer = (options: { readonly storage: DurableObjectStorage; readonly model: string }) =>
+	static readonly layer = (storage: DurableObjectStorage) =>
 		Layer.effect(
 			Pi,
 			Effect.gen(function* () {
@@ -98,33 +105,36 @@ export class Pi extends Context.Service<Pi, Agentic>()("tardigrade/Pi") {
 						Effect.ignore,
 					);
 
-				const models = createModels({ authContext: bindingAuthContext });
+				const choice = yield* Model;
+				const models = createModels(choice.options);
 
-				models.setProvider(cloudflareWorkersAIProvider());
+				models.setProvider(choice.provider);
 
 				const registry = createRegistry();
 
-				registry.install(defineExtension({ name: "tardigrade", sections: [section("preamble", () => PROMPT, { tag: false })], tools: tools(repo, filesChanged) }));
+				registry.install(defineExtension({ name: "tardigrade", sections: [section("preamble", () => PROMPT, { tag: false })], tools: tools(repo, filesChanged, yield* Effect.context<never>()) }));
 
 				const harness = yield* Effect.acquireRelease(
-					pi("open", async () => Harness.open(await openDurableObjectSqliteStorage(options.storage), { models, registry }, CONTEXT)),
+					pi("open", async () => Harness.open(await openDurableObjectSqliteStorage(storage), { models, registry }, CONTEXT)),
 					(opened) => Effect.promise(() => opened.close(CONTEXT).catch(() => undefined)),
 				);
 
 				const conversation: Conversation = yield* pi("root", () =>
-					harness.root(CONTEXT, { agent: { model: { provider: "cloudflare-workers-ai", modelId: options.model } } }),
+					harness.root(CONTEXT, { agent: { model: { provider: choice.provider.id, modelId: choice.modelId } } }),
 				);
 
-				const watch = yield* pi("watch", () => harness.watchDoc(LiveDoc, conversation.id, CONTEXT));
+				const watch = yield* pi("watch", () => harness.watchDoc(LiveDoc, conversation.id, CONTEXT)).pipe(
+					Effect.flatMap((handle) => (handle === undefined ? Effect.fail(new HarnessFailed({ step: "watch", reason: "no live document" })) : Effect.succeed(handle))),
+				);
 
 				const live = Stream.callback<Option.Option<PiLiveState>>((queue) =>
 					Effect.acquireRelease(
 						Effect.sync(() =>
-							watch?.start(async (value) => {
+							watch.start(async (value) => {
 								Queue.offerUnsafe(queue, decodePiLiveState(value));
 							}),
 						),
-						() => Effect.promise(() => watch?.stop() ?? Promise.resolve(undefined)),
+						() => Effect.promise(() => watch.stop()),
 					),
 				);
 
@@ -142,7 +152,7 @@ export class Pi extends Context.Service<Pi, Agentic>()("tardigrade/Pi") {
 
 				harness.resume();
 
-				return { repo, live, blocks, run };
+				return { repo, live, blocks, run, filesChanged };
 			}),
 		);
 }

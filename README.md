@@ -33,16 +33,15 @@ The SQLite adapter that lets Pi Durable use a Durable Object's storage is checke
 
 ### Effect v4: the Durable Object is an Effect program
 
-The Durable Object class is a thin shell. It builds one `ManagedRuntime` per object from Layers, and every RPC method runs an Effect inside it ([`worker/agent.ts`](worker/agent.ts)):
+The Durable Object class is a thin shell. It builds one `ManagedRuntime` per object from Layers, and every RPC method runs an Effect inside it. The model and the file store are Layers too, so the test suite swaps in Pi's fake model and storage-backed files and runs the real agent offline ([`worker/agent.ts`](worker/agent.ts)):
 
 ```ts
-const layerFor = (ctx: DurableObjectState, env: AgentEnv, name: ConversationName) => {
-	const model = env.MODEL ?? DEFAULT_MODEL;
+export const conversationLayer = (ctx: DurableObjectState, model: Layer.Layer<Model>, files: Layer.Layer<Repo, RepoUnavailable>) => {
 	const object = Layer.mergeAll(DurableObjectContext.layer(ctx), Store.layer(ctx.storage));
 	const broadcast = Broadcast.layer.pipe(Layer.provideMerge(object));
-	const pi = Pi.layer({ storage: ctx.storage, model }).pipe(Layer.provide(Repo.layer(env.ARTIFACTS, `tg-${name}`)), Layer.provideMerge(broadcast));
+	const pi = Pi.layer(ctx.storage).pipe(Layer.provide(files), Layer.provideMerge(model), Layer.provideMerge(broadcast));
 
-	return Conversation.layer(model).pipe(Layer.provideMerge(pi));
+	return Conversation.layer.pipe(Layer.provideMerge(pi));
 };
 ```
 
@@ -51,18 +50,21 @@ The Pi harness is a scoped resource. `Effect.acquireRelease` opens it and closes
 ```ts
 const kill = Effect.gen(function* () {
 	const at = yield* now;
-	const running = Option.isSome(store.pending()) && Option.isNone(store.killedAt()) && !store.revivedWithin(at, KILL_COOLDOWN_MS);
+	const running = Option.isSome(store.pending()) && Option.isNone(store.killedAt());
 
 	if (!running) return yield* Effect.fail(new NothingRunning());
 
 	store.recordKill(at);
-	store.addEvent(KilledEvent.make({ at, afterBlock: yield* blockCount, wasBusy: yield* Ref.get(driving) }));
+
+	const wasBusy = yield* Ref.get(driving);
+
+	store.addEvent(KilledEvent.make({ at, afterBlock: yield* blockCount, wasBusy }));
 	yield* object.setAlarm(at + REVIVE_AFTER_MS);
 	yield* object.flush;
 	yield* broadcast.send(EventsFrame.make({ events: store.events() }));
 	yield* broadcast.send(KilledFrame.make({ killedAt: at }));
 
-	return yield* object.abort("killed from the UI");
+	return yield* object.abort(KILLED_FROM_THE_UI);
 });
 ```
 
@@ -104,7 +106,7 @@ Durable Object "Agent", one per conversation, an Effect ManagedRuntime
 
 ### What happens when you press Kill it
 
-1. The object records the kill in storage (the time, and where in the transcript it happened). It counts one more life and sets an alarm for one second later. A second Kill while one is pending does nothing.
+1. The object records the kill in storage (the time, and where in the transcript it happened). It counts one more life and sets an alarm for one second later. A Kill that reaches the same instance while a kill is pending does nothing. A Kill that arrives after the comeback is a new kill: three quick clicks can cost the agent up to three lives, and it still finishes.
 2. It awaits `storage.sync()`, so that record cannot be lost. Only then does it tell open tabs about the kill, and call `ctx.abort()`.
 3. The runtime discards the instance. Everything in memory is gone: the in-flight model call, the open WebSockets, and any unsaved work.
 4. The next event for the object gets a fresh instance. That event is the alarm or the page reconnecting, whichever comes first. The fresh instance reads the same SQLite, finds the unfinished request, records a comeback, and submits the request again under the same ID.
@@ -147,6 +149,10 @@ kill 5: lives=6 busy=true
 {"lives":6,"busy":false,"commits":1,"files":["index.html"],"replies":2,"timeline":"Killed,Back,Killed,Back,Killed,Back,Killed,Back,Killed,Back"}
 # 2026-10-07, exit 0
 ```
+
+### The whole agent, killed three times, offline
+
+[`test/revival/`](test/revival) runs the real `Agent` Durable Object and the real `conversationLayer` inside workerd, with two Layers swapped: Pi's fake model, and files kept in the object's own storage. It sends a task, kills the object three times with `ctx.abort()` while it works, and requires 4 lives, exactly `Killed, Back` three times in the stored timeline, and the finished file. It needs no account and no network, and it runs on every `npm run check`.
 
 ### Pi Durable's storage suite, inside the real runtime
 

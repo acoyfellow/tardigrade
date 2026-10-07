@@ -96,6 +96,10 @@ export class StillWorking extends Schema.TaggedError<StillWorking>()("StillWorki
 
 export class NothingRunning extends Schema.TaggedError<NothingRunning>()("NothingRunning", {}) {}
 
+export class AgentUnavailable extends Schema.TaggedError<AgentUnavailable>()("AgentUnavailable", { reason: Schema.String }) {}
+
+export const KILLED_FROM_THE_UI = "killed from the UI";
+
 export class FileNotFound extends Schema.TaggedError<FileNotFound>()("FileNotFound", { path: Schema.String }) {}
 
 export const Accepted = Schema.Struct({ id: Schema.String });
@@ -113,10 +117,10 @@ export const Input = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLeng
 const target = { name: ConversationName };
 
 export const AgentRpcs = RpcGroup.make(
-	Rpc.make("Snapshot", { payload: target, success: Snapshot }),
-	Rpc.make("Send", { payload: { ...target, text: Input }, success: Accepted, error: StillWorking }),
-	Rpc.make("Kill", { payload: target, error: NothingRunning }),
-	Rpc.make("ReadFile", { payload: { ...target, path: Schema.String }, success: Schema.String, error: FileNotFound }),
+	Rpc.make("Snapshot", { payload: target, success: Snapshot, error: AgentUnavailable }),
+	Rpc.make("Send", { payload: { ...target, text: Input }, success: Accepted, error: Schema.Union([StillWorking, AgentUnavailable]) }),
+	Rpc.make("Kill", { payload: target, error: Schema.Union([NothingRunning, AgentUnavailable]) }),
+	Rpc.make("ReadFile", { payload: { ...target, path: Schema.String }, success: Schema.String, error: Schema.Union([FileNotFound, AgentUnavailable]) }),
 );
 
 export type AgentRpcs = typeof AgentRpcs;

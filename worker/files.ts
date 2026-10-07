@@ -229,6 +229,45 @@ const make = (artifacts: Artifacts, repo: string) =>
 
 export type RepoFiles = Effect.Success<ReturnType<typeof make>>;
 
+const FilesJson = Schema.fromJsonString(Schema.Struct({ files: Schema.Record(Schema.String, Schema.String), commits: Schema.Array(Schema.Struct({ oid: Schema.String, message: Schema.String, time: Schema.Number })) }));
+
+const decodeStoredFiles = Schema.decodeUnknownOption(FilesJson);
+
+const encodeStoredFiles = Schema.encodeSync(FilesJson);
+
+const STORED_FILES_KEY = "test-files";
+
+const inStorage = (kv: SyncKvStorage) =>
+	Effect.sync(() => {
+		type Stored = { readonly files: Readonly<Record<string, string>>; readonly commits: ReadonlyArray<Commit> };
+
+		const load = (): Stored => Option.getOrElse(decodeStoredFiles(kv.get(STORED_FILES_KEY)), (): Stored => ({ files: {}, commits: [] }));
+
+		const list = Effect.sync(() => Object.keys(load().files).sort());
+
+		const read = (path: string) => cleanPath(path).pipe(Effect.map((file) => Option.fromNullishOr(load().files[file])));
+
+		const log = Effect.sync(() => load().commits);
+
+		const write = (path: string, content: string, message: string) =>
+			Effect.gen(function* () {
+				const file = yield* cleanPath(path);
+				const stored = load();
+
+				if (stored.files[file] === content) return { oid: stored.commits[0]?.oid ?? "", changed: false };
+
+				const commit: Commit = { oid: crypto.randomUUID().replaceAll("-", ""), message, time: yield* Clock.currentTimeMillis };
+
+				kv.put(STORED_FILES_KEY, encodeStoredFiles({ files: { ...stored.files, [file]: content }, commits: [commit, ...stored.commits] }));
+
+				return { oid: commit.oid, changed: true };
+			});
+
+		return { list, read, log, write } satisfies RepoFiles;
+	});
+
 export class Repo extends Context.Service<Repo, RepoFiles>()("tardigrade/Repo") {
 	static readonly layer = (artifacts: Artifacts, name: string) => Layer.effect(Repo, make(artifacts, name));
+
+	static readonly inObjectStorage = (storage: DurableObjectStorage) => Layer.effect(Repo, inStorage(storage.kv));
 }

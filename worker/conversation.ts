@@ -6,9 +6,9 @@ import {
 	EventsFrame,
 	FailedEvent,
 	FileNotFound,
-	FilesFrame,
 	KilledEvent,
 	KilledFrame,
+	KILLED_FROM_THE_UI,
 	type Live,
 	LiveFrame,
 	NothingRunning,
@@ -20,16 +20,13 @@ import {
 	StillWorking,
 	type TimelineEvent,
 } from "../shared/protocol";
-import type { RepoFiles } from "./files";
-import { Pi } from "./harness";
+import { Model, Pi } from "./harness";
 import { Broadcast, DurableObjectContext, now, Store } from "./services";
 import { isBetweenSteps, type PiLiveState, toLive } from "./view";
 
 const WATCHDOG_MS = 15_000;
 
 const REVIVE_AFTER_MS = 1_000;
-
-const KILL_COOLDOWN_MS = 1_000;
 
 const Pending = Schema.Struct({ id: Schema.String, text: Schema.String });
 
@@ -50,14 +47,14 @@ export type Conversation = {
 };
 
 export class Agent extends Context.Service<Agent, Conversation>()("tardigrade/Agent") {
-	static readonly layer = (model: string) =>
-		Layer.effect(
+	static readonly layer = Layer.effect(
 			Agent,
 			Effect.gen(function* () {
 				const object = yield* DurableObjectContext;
 				const store = yield* Store;
 				const broadcast = yield* Broadcast;
 				const pi = yield* Pi;
+				const { modelId: model } = yield* Model;
 				const driving = yield* Ref.make(false);
 				const live = yield* Ref.make<LiveState>({ value: Option.none(), changedAt: 0 });
 
@@ -74,11 +71,7 @@ export class Agent extends Context.Service<Agent, Conversation>()("tardigrade/Ag
 
 				const record = (event: TimelineEvent) => broadcast.send(EventsFrame.make({ events: store.addEvent(event) }));
 
-				const pushFiles = (repo: RepoFiles) =>
-					Effect.all({ files: repo.list, commits: repo.log }).pipe(
-						Effect.flatMap(({ files, commits }) => broadcast.send(FilesFrame.make({ files, commits }))),
-						Effect.ignore,
-					);
+				const pushFiles = pi.filesChanged;
 
 				const snapshot: Effect.Effect<Snapshot> = Effect.gen(function* () {
 					const [all, files, commits] = yield* Effect.all([blocks, pi.repo.list.pipe(Effect.orElseSucceed(() => [])), pi.repo.log.pipe(Effect.orElseSucceed(() => []))], {
@@ -148,8 +141,6 @@ export class Agent extends Context.Service<Agent, Conversation>()("tardigrade/Ag
 					const killedAt = store.takeKill();
 					const pending = store.pending().pipe(Option.flatMap(decodePending));
 
-					store.recordRevival(at);
-
 					if (Option.isNone(killedAt) && Option.isSome(pending)) store.recordRestart();
 
 					return { at, killedAt, pending };
@@ -186,18 +177,21 @@ export class Agent extends Context.Service<Agent, Conversation>()("tardigrade/Ag
 
 				const kill = Effect.gen(function* () {
 					const at = yield* now;
-					const running = Option.isSome(store.pending()) && Option.isNone(store.killedAt()) && !store.revivedWithin(at, KILL_COOLDOWN_MS);
+					const running = Option.isSome(store.pending()) && Option.isNone(store.killedAt());
 
 					if (!running) return yield* Effect.fail(new NothingRunning());
 
 					store.recordKill(at);
-					store.addEvent(KilledEvent.make({ at, afterBlock: yield* blockCount, wasBusy: yield* Ref.get(driving) }));
+
+					const wasBusy = yield* Ref.get(driving);
+
+					store.addEvent(KilledEvent.make({ at, afterBlock: yield* blockCount, wasBusy }));
 					yield* object.setAlarm(at + REVIVE_AFTER_MS);
 					yield* object.flush;
 					yield* broadcast.send(EventsFrame.make({ events: store.events() }));
 					yield* broadcast.send(KilledFrame.make({ killedAt: at }));
 
-					return yield* object.abort("killed from the UI");
+					return yield* object.abort(KILLED_FROM_THE_UI);
 				});
 
 				const readFile = (path: string) =>

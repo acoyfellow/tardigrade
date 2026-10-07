@@ -31,6 +31,7 @@ export const initialModel = ({ name, now }: Flags): Model => ({
 	phase: Phase.Connecting(),
 	connected: false,
 	connectionEpoch: 0,
+	failedConnects: 0,
 	lives: 1,
 	busy: false,
 	blocks: [],

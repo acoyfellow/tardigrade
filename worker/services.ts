@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
+import { Cause, Clock, Context, Effect, Layer, Option, Schema } from "effect";
 import { type ServerFrame, ServerFrameJson } from "../shared/protocol";
 import { Meta } from "./meta";
 
@@ -23,7 +23,10 @@ export class DurableObjectContext extends Context.Service<DurableObjectContext, 
 			clearAlarm: Effect.promise(() => ctx.storage.deleteAlarm()),
 			flush: Effect.promise(() => ctx.storage.sync()),
 			abort: (reason) => Effect.sync(() => ctx.abort(reason)).pipe(Effect.andThen(Effect.never)),
-			background: (effect) => Effect.sync(() => ctx.waitUntil(Effect.runPromise(Effect.ignoreCause(effect)))),
+			background: (effect) =>
+				Effect.contextWith((context: Context.Context<never>) =>
+					Effect.sync(() => ctx.waitUntil(Effect.runPromiseWith(context)(effect.pipe(Effect.tapCause((cause) => Effect.logError("background work failed", Cause.pretty(cause))), Effect.ignoreCause)))),
+				),
 		});
 }
 

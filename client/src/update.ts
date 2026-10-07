@@ -101,11 +101,12 @@ const toggled = (items: ReadonlyArray<string>, item: string) => (items.includes(
 export const update = (model: Model, message: Message): UpdateReturn =>
 	Message.match<UpdateReturn>(message, {
 		ReceivedFrame: ({ frame }) => onFrame(model, frame),
-		SocketOpened: () => ({ model: modifyFields(model, { connected: () => true }) }),
+		SocketOpened: () => ({ model: modifyFields(model, { connected: () => true, failedConnects: () => 0 }) }),
 		SocketClosed: () => ({
 			model: modifyFields(model, {
 				connected: () => false,
 				connectionEpoch: (epoch) => epoch + 1,
+				failedConnects: (failures) => (model.connected ? 0 : failures + 1),
 				phase: (phase) =>
 					Match.value(phase).pipe(
 						Match.tag("Dead", ({ killedAt }) => Phase.Reviving({ killedAt })),

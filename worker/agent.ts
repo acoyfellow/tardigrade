@@ -1,9 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
-import { Effect, Layer, ManagedRuntime, Option, Schema } from "effect";
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Schema } from "effect";
 import { type ConversationName, KillOutcomeJson, ReadOutcomeJson, SendOutcomeJson, SnapshotFrame, SnapshotJson } from "../shared/protocol";
 import { Agent as Conversation } from "./conversation";
-import { Repo } from "./files";
-import { type HarnessFailed, Pi } from "./harness";
+import { Repo, type RepoUnavailable } from "./files";
+import { type HarnessFailed, Model, Pi } from "./harness";
 import { routeWorkersAIThroughBinding } from "./model";
 import { Meta } from "./meta";
 import { Broadcast, DurableObjectContext, Store } from "./services";
@@ -20,14 +20,16 @@ const encodeKill = Schema.encodeSync(KillOutcomeJson);
 
 const encodeRead = Schema.encodeSync(ReadOutcomeJson);
 
-const layerFor = (ctx: DurableObjectState, env: AgentEnv, name: ConversationName) => {
-	const model = env.MODEL ?? DEFAULT_MODEL;
+export const conversationLayer = (ctx: DurableObjectState, model: Layer.Layer<Model>, files: Layer.Layer<Repo, RepoUnavailable>) => {
 	const object = Layer.mergeAll(DurableObjectContext.layer(ctx), Store.layer(ctx.storage));
 	const broadcast = Broadcast.layer.pipe(Layer.provideMerge(object));
-	const pi = Pi.layer({ storage: ctx.storage, model }).pipe(Layer.provide(Repo.layer(env.ARTIFACTS, `tg-${name}`)), Layer.provideMerge(broadcast));
+	const pi = Pi.layer(ctx.storage).pipe(Layer.provide(files), Layer.provideMerge(model), Layer.provideMerge(broadcast));
 
-	return Conversation.layer(model).pipe(Layer.provideMerge(pi));
+	return Conversation.layer.pipe(Layer.provideMerge(pi));
 };
+
+const layerFor = (ctx: DurableObjectState, env: AgentEnv, name: ConversationName) =>
+	conversationLayer(ctx, Model.workersAI(env.MODEL ?? DEFAULT_MODEL), Repo.layer(env.ARTIFACTS, `tg-${name}`));
 
 const RESERVED_CLOSE_CODES = new Set([1005, 1006, 1015]);
 
@@ -41,7 +43,7 @@ const withAgent = <A, E>(use: (agent: Conversation["Service"]) => Effect.Effect<
 	});
 
 export class Agent extends DurableObject<AgentEnv> {
-	private runtime: Option.Option<ManagedRuntime.ManagedRuntime<Services, HarnessFailed>> = Option.none();
+	private runtime: Option.Option<ManagedRuntime.ManagedRuntime<Services, HarnessFailed | RepoUnavailable>> = Option.none();
 
 	constructor(ctx: DurableObjectState, env: AgentEnv) {
 		super(ctx, env);
@@ -54,14 +56,24 @@ export class Agent extends DurableObject<AgentEnv> {
 
 			Option.map(name, (value) => meta.claimName(value));
 
-			const created = ManagedRuntime.make(layerFor(this.ctx, this.env, meta.name()));
+			const created = ManagedRuntime.make(this.layer(this.ctx, meta.name()));
 
 			this.runtime = Option.some(created);
 
 			return created;
 		});
 
-		return runtime.runPromise(effect);
+		return runtime.runPromiseExit(effect).then((exit) => (Exit.isSuccess(exit) ? exit.value : this.reset(runtime).then(() => Promise.reject(Cause.squash(exit.cause)))));
+	}
+
+	protected layer(ctx: DurableObjectState, name: ConversationName) {
+		return layerFor(ctx, this.env, name);
+	}
+
+	private reset(runtime: ManagedRuntime.ManagedRuntime<Services, HarnessFailed | RepoUnavailable>): Promise<void> {
+		this.runtime = Option.none();
+
+		return runtime.dispose();
 	}
 
 	getSnapshot(name: ConversationName): Promise<string> {

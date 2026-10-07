@@ -1,4 +1,4 @@
-import { Option } from "effect";
+import { Duration, Option } from "effect";
 import { Command, given, message, model, story } from "foldkit/story";
 import { describe, expect, test } from "vitest";
 import {
@@ -18,6 +18,7 @@ import {
 import { Kill, Send, ShowConversation } from "./command";
 import { initialModel } from "./main";
 import { Message } from "./message";
+import { reconnectDelay } from "./socket";
 import { Phase } from "./model";
 import { update } from "./update";
 
@@ -40,6 +41,26 @@ const snapshot = (overrides: Partial<Snapshot>): Snapshot => ({
 });
 
 const frame = (value: Parameters<typeof Message.ReceivedFrame>[0]["frame"]) => Message.ReceivedFrame({ frame: value });
+
+describe("reconnecting", () => {
+	test("each failed connect waits longer, up to ten seconds, and a good connect resets the wait", () => {
+		expect([0, 1, 2, 3, 10].map((failures) => Duration.toMillis(reconnectDelay(failures)))).toEqual([0, 500, 1000, 2000, 10000]);
+
+		story(
+			update,
+			given(fresh),
+			message(Message.SocketClosed()),
+			message(Message.SocketClosed()),
+			model((current) => {
+				expect(current.failedConnects).toBe(2);
+			}),
+			message(Message.SocketOpened()),
+			model((current) => {
+				expect(current.failedConnects).toBe(0);
+			}),
+		);
+	});
+});
 
 describe("connecting", () => {
 	test("the first snapshot moves the page from connecting to idle", () => {

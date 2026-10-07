@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Option, Schema } from "effect";
 import { HttpRouter } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
-import { AgentRpcs, ConversationName, KillOutcomeJson, ReadOutcomeJson, RPC_PATH, SendOutcomeJson, SnapshotJson } from "../shared/protocol";
+import { AgentRpcs, AgentUnavailable, ConversationName, KILLED_FROM_THE_UI, KillOutcomeJson, ReadOutcomeJson, RPC_PATH, SendOutcomeJson, SnapshotJson } from "../shared/protocol";
 import { accessConfig, accessToken, verifyAccessToken } from "./access";
 import { Agent, type AgentEnv } from "./agent";
 
@@ -35,21 +35,26 @@ const decodeKill = Schema.decodeEffect(KillOutcomeJson);
 
 const decodeRead = Schema.decodeEffect(ReadOutcomeJson);
 
-const call = <A>(promise: () => Promise<A>): Effect.Effect<A> => Effect.promise(promise);
+const unavailable = (cause: unknown) => new AgentUnavailable({ reason: String(cause) });
+
+const call = <A>(promise: () => Promise<A>): Effect.Effect<A, AgentUnavailable> => Effect.tryPromise({ try: promise, catch: unavailable });
+
+const wasAborted = (error: AgentUnavailable): boolean => error.reason.includes(KILLED_FROM_THE_UI);
 
 const handlers = (env: Env) =>
 	AgentRpcs.toLayer({
-		Snapshot: ({ name }) => call((): Promise<string> => agentFor(env, name).getSnapshot(name)).pipe(Effect.flatMap(decodeSnapshot), Effect.orDie),
+		Snapshot: ({ name }) => call(() => agentFor(env, name).getSnapshot(name)).pipe(Effect.flatMap(decodeSnapshot), Effect.catchTag("SchemaError", Effect.die)),
 		Send: ({ name, text }) =>
-			call((): Promise<string> => agentFor(env, name).send(name, text)).pipe(Effect.flatMap(decodeSend), Effect.orDie, Effect.flatMap(Effect.fromResult)),
+			call(() => agentFor(env, name).send(name, text)).pipe(Effect.flatMap(decodeSend), Effect.catchTag("SchemaError", Effect.die), Effect.flatMap(Effect.fromResult)),
 		Kill: ({ name }) =>
-			Effect.tryPromise((): Promise<string> => agentFor(env, name).kill(name)).pipe(
+			call(() => agentFor(env, name).kill(name)).pipe(
 				Effect.flatMap(decodeKill),
+				Effect.catchTag("SchemaError", Effect.die),
 				Effect.flatMap(Effect.fromResult),
-				Effect.catchTags({ UnknownError: () => Effect.void, SchemaError: Effect.die }),
+				Effect.catchTag("AgentUnavailable", (error) => (wasAborted(error) ? Effect.void : Effect.fail(error))),
 			),
 		ReadFile: ({ name, path }) =>
-			call((): Promise<string> => agentFor(env, name).readFile(name, path)).pipe(Effect.flatMap(decodeRead), Effect.orDie, Effect.flatMap(Effect.fromResult)),
+			call(() => agentFor(env, name).readFile(name, path)).pipe(Effect.flatMap(decodeRead), Effect.catchTag("SchemaError", Effect.die), Effect.flatMap(Effect.fromResult)),
 	});
 
 const buildRpcHandler = (env: Env) =>

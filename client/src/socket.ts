@@ -17,7 +17,12 @@ export const AgentSocket = ManagedResource.tag<Connection>()("AgentSocket");
 
 type AgentSocketService = ManagedResource.ServiceOf<typeof AgentSocket>;
 
-const SocketTarget = Schema.Struct({ name: ConversationName, epoch: Schema.Number });
+const SocketTarget = Schema.Struct({ name: ConversationName, epoch: Schema.Number, failures: Schema.Number });
+
+const MAX_BACKOFF = Duration.seconds(10);
+
+export const reconnectDelay = (failures: number): Duration.Duration =>
+	failures === 0 ? Duration.zero : Duration.min(Duration.millis(250 * 2 ** Math.min(failures, 6)), MAX_BACKOFF);
 
 const decodeFrame = Schema.decodeUnknownOption(ServerFrameJson);
 
@@ -56,8 +61,10 @@ const connect = (name: ConversationName, frames: FrameQueue) =>
 		Effect.catchTag("TimeoutError", () => Effect.fail(new SocketFailed({ reason: "timed out" }))),
 	);
 
-const open = (name: ConversationName) =>
+const open = (name: ConversationName, failures: number) =>
 	Effect.gen(function* () {
+		yield* Effect.sleep(reconnectDelay(failures));
+
 		const frames = yield* Queue.unbounded<ServerFrame, Cause.Done>();
 		const socket = yield* connect(name, frames);
 
@@ -67,8 +74,8 @@ const open = (name: ConversationName) =>
 export const managedResources = ManagedResource.make<Model, Message>()((entry) => ({
 	agentSocket: entry(Schema.Option(SocketTarget), {
 		resource: AgentSocket,
-		modelToMaybeRequirements: (model) => Option.some({ name: model.name, epoch: model.connectionEpoch }),
-		acquire: ({ name }) => open(name),
+		modelToMaybeRequirements: (model) => Option.some({ name: model.name, epoch: model.connectionEpoch, failures: model.failedConnects }),
+		acquire: ({ name, failures }) => open(name, failures),
 		release: ({ socket }) => Effect.sync(() => socket.close()),
 		onAcquired: () => Message.SocketOpened(),
 		onReleased: () => Message.SocketClosed(),
