@@ -17,6 +17,7 @@ Read the README first. These rules keep the repository honest and safe to publis
 - Do not edit `worker/vendor/` or `tools/oxlint/anti-slop/`. They are generated; rerun `npm run vendor:pi-durable` or `npm run vendor:anti-slop`.
 - Keep `workers_dev: false` and `preview_urls: false` in every wrangler config.
 - Every request must pass the Access check in `worker/access.ts`. Do not add routes before it, and do not widen the local-dev bypass beyond loopback hosts.
+- Run one `wrangler dev` per `.wrangler/state` folder. Two servers on one folder run the same Durable Object twice and corrupt its SQLite. Use `--persist-to` for a second server.
 - Never commit account IDs, API tokens, or internal hostnames.
 - Every tool must be safe to run twice: mark it `replay: "safe"` only if a second run with the same arguments changes nothing. Add it to the replay table in the README.
 - Timeline events (kills, comebacks, failures) are written to storage before their frame is sent. The page renders only what the server stored.

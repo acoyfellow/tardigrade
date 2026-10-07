@@ -13,6 +13,7 @@ import {
 	EventsFrame,
 	FailedEvent,
 	KilledEvent,
+	ResumedEvent,
 	FileNotFound,
 	FilesFrame,
 	KilledFrame,
@@ -48,6 +49,8 @@ const WATCHDOG_MS = 15_000;
 
 const REVIVE_AFTER_MS = 1_000;
 
+const KILL_COOLDOWN_MS = 1_000;
+
 const PROMPT = [
 	"You are tardigrade, a coding agent whose work survives crashes.",
 	"Your workspace is a git repository. Every file you write becomes a commit.",
@@ -77,6 +80,8 @@ const encodeRead = Schema.encodeSync(ReadOutcomeJson);
 
 const text = (value: string) => ({ content: [{ type: "text" as const, text: value }] });
 
+class SocketSendFailed extends Schema.TaggedError<SocketSendFailed>()("SocketSendFailed", { reason: Schema.String }) {}
+
 type Opened = { readonly conversation: Conversation; readonly repo: RepoFiles };
 
 export class Agent extends DurableObject<AgentEnv> {
@@ -101,11 +106,11 @@ export class Agent extends DurableObject<AgentEnv> {
 		const data = encodeFrame(frame);
 
 		for (const socket of this.ctx.getWebSockets()) {
-			try {
-				socket.send(data);
-			} catch {
-				socket.close(1011, "send failed");
-			}
+			Effect.runSync(
+				Effect.try({ try: () => socket.send(data), catch: (cause) => new SocketSendFailed({ reason: String(cause) }) }).pipe(
+					Effect.catchTag("SocketSendFailed", () => Effect.sync(() => socket.close(1011, "send failed"))),
+				),
+			);
 		}
 	}
 
@@ -226,11 +231,20 @@ export class Agent extends DurableObject<AgentEnv> {
 	}
 
 	private async recordComeback(opened: Opened, killedAt: Option.Option<number>, resumed: boolean): Promise<void> {
-		if (Option.isNone(killedAt)) return;
+		if (Option.isNone(killedAt) && !resumed) return;
 
 		const at = Date.now();
 
-		this.record(BackEvent.make({ at, afterBlock: await this.blockCount(opened), afterMs: at - killedAt.value, lives: this.meta.lives(), resumed }));
+		this.meta.recordRevival(at);
+		const afterBlock = await this.blockCount(opened);
+
+		if (Option.isNone(killedAt)) {
+			this.meta.recordRestart();
+			this.record(ResumedEvent.make({ at, afterBlock, lives: this.meta.lives() }));
+		} else {
+			this.record(BackEvent.make({ at, afterBlock, afterMs: at - killedAt.value, lives: this.meta.lives(), resumed }));
+		}
+
 		this.broadcast(RevivedFrame.make({ lives: this.meta.lives() }));
 	}
 
@@ -321,16 +335,18 @@ export class Agent extends DurableObject<AgentEnv> {
 	async kill(name: ConversationName): Promise<string> {
 		const opened = await this.open(Option.some(name));
 
-		if (Option.isNone(this.meta.pending())) return encodeKill(Result.fail(new NothingRunning()));
-
 		const killedAt = Date.now();
+
+		if (Option.isNone(this.meta.pending()) || Option.isSome(this.meta.killedAt()) || this.meta.revivedWithin(killedAt, KILL_COOLDOWN_MS)) {
+			return encodeKill(Result.fail(new NothingRunning()));
+		}
 
 		this.meta.recordKill(killedAt);
 		this.meta.addEvent(KilledEvent.make({ at: killedAt, afterBlock: await this.blockCount(opened), wasBusy: this.driving }));
+		await this.ctx.storage.setAlarm(killedAt + REVIVE_AFTER_MS);
+		await this.ctx.storage.sync();
 		this.broadcast(EventsFrame.make({ events: this.meta.events() }));
 		this.broadcast(KilledFrame.make({ killedAt }));
-		await this.ctx.storage.setAlarm(Date.now() + REVIVE_AFTER_MS);
-		await this.ctx.storage.sync();
 		this.ctx.abort("killed from the UI");
 
 		return encodeKill(Result.succeed(undefined));

@@ -7,6 +7,7 @@ import {
 	ConversationName,
 	EventsFrame,
 	KilledEvent,
+	ResumedEvent,
 	KilledFrame,
 	ReplyBlock,
 	RevivedFrame,
@@ -165,6 +166,20 @@ describe("kill and revival", () => {
 				expect(current.events).toEqual([killed, back]);
 				expect(current.phase._tag).toBe("Working");
 				expect(current.lives).toBe(2);
+			}),
+		);
+	});
+
+	test("a restart without a kill shows as a Restarted line and keeps working", () => {
+		const restarted = ResumedEvent.make({ at: 9_000, afterBlock: 1, lives: 2 });
+
+		story(
+			update,
+			given(working),
+			message(frame(EventsFrame.make({ events: [restarted] }))),
+			model((current) => {
+				expect(current.events).toEqual([restarted]);
+				expect(current.phase._tag).toBe("Working");
 			}),
 		);
 	});

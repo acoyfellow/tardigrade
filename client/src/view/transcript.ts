@@ -87,6 +87,7 @@ const eventView = (h: H, event: TimelineEvent): Html =>
 			Killed: ({ wasBusy }) => note(h, "border-bad text-bad", "Killed", `The Durable Object was aborted${wasBusy ? " in the middle of the task." : "."}`),
 			Back: ({ afterMs, lives, resumed }) =>
 				note(h, "border-life text-life", `Back after ${seconds(afterMs)}s`, resumed ? `Life ${lives}. Resuming from the last checkpoint.` : "Nothing was running, so there was nothing to resume."),
+			Resumed: ({ lives }) => note(h, "border-life text-life", "Restarted", `Life ${lives}. The object stopped without a kill, for example a deploy, and picked the task back up.`),
 			Failed: ({ reason }) => note(h, "border-bad text-bad", "Failed", reason),
 		}),
 	);

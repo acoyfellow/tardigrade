@@ -25,6 +25,7 @@ const Key = {
 	lives: "lives",
 	killed: "killed",
 	events: "events",
+	revivedAt: "revivedAt",
 } as const;
 
 export class Meta {
@@ -85,6 +86,18 @@ export class Meta {
 	recordKill(at: number): void {
 		this.kv.put(Key.lives, this.lives() + 1);
 		this.kv.put(Key.killed, at);
+	}
+
+	recordRevival(at: number): void {
+		this.kv.put(Key.revivedAt, at);
+	}
+
+	revivedWithin(now: number, windowMs: number): boolean {
+		return Option.match(decodeTime(this.kv.get(Key.revivedAt)), { onNone: () => false, onSome: (at) => now - at < windowMs });
+	}
+
+	recordRestart(): void {
+		this.kv.put(Key.lives, this.lives() + 1);
 	}
 
 	takeKill(): Option.Option<number> {

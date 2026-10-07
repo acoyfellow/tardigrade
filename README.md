@@ -8,7 +8,7 @@ Give it a task, press **Kill it** while it works, and watch. Its Durable Object 
 
 ![Five kills in a row. Each shows Killed, then Back after, and the task still ends with one commit.](docs/kill5.gif)
 
-*Five kills, eight seconds apart, sped up 1.8×. The task still ends with one file and one commit.*
+*Five kills, one every eight seconds, sped up 1.8×. The task still ends with one file and one commit.*
 
 tardigrade is a reference app to fork and run for yourself behind Cloudflare Access. It is not a hosted product, and it is not safe on the open internet: anyone who can open it spends your Workers AI budget.
 
@@ -33,14 +33,14 @@ Durable Object "Agent", one per conversation
 
 ### What happens when you press Kill it
 
-1. The object records the kill in storage (the time, and where in the transcript it happened). It counts one more life and sets an alarm for one second later.
-2. It awaits `storage.sync()`, so that record cannot be lost, and then calls `ctx.abort()`.
+1. The object records the kill in storage (the time, and where in the transcript it happened). It counts one more life and sets an alarm for one second later. A second Kill while one is pending does nothing.
+2. It awaits `storage.sync()`, so that record cannot be lost. Only then does it tell open tabs about the kill, and call `ctx.abort()`.
 3. The runtime discards the instance. Everything in memory is gone: the in-flight model call, the open WebSockets, and any unsaved work.
 4. The next event for the object gets a fresh instance. That event is the alarm or the page reconnecting, whichever comes first. The fresh instance reads the same SQLite, finds the unfinished request, records a comeback, and submits the request again under the same ID.
 5. Pi Durable continues from the last committed step. The step that was cut off runs again, so a model call that was in flight is made again.
 6. Every open tab gets the new state over its WebSocket. The kill and the comeback are read from storage, so a refresh, or a tab opened later, shows the same transcript.
 
-The same path covers deaths you did not cause. While a task runs, the object keeps a 15-second watchdog alarm. A deploy, an eviction, or an uncaught exception therefore ends in a comeback, not a stuck task.
+The same path covers deaths you did not cause. While a task runs, the object keeps a 15-second watchdog alarm. After a deploy, an eviction, or an uncaught exception, the next instance finds the unfinished request with no kill recorded, adds a **Restarted** line to the timeline, and picks the task back up. The watchdog revives a dead instance; it does not time out a live one that is slow.
 
 ### Replay is at-least-once
 
@@ -57,7 +57,7 @@ A task can end with one extra commit. It does not end with lost work. tardigrade
 
 ### Kill it five times
 
-`npm run kill5` sends a task, kills the agent five times about seven seconds apart, and waits. It passes only if all of these are true:
+`npm run kill5` sends a task, kills the agent five times (one kill about every ten seconds), and waits. It passes only if all of these are true:
 
 - There are 6 lives.
 - The task finished.
@@ -79,7 +79,7 @@ kill 5: lives=6 busy=true
 
 ### Pi Durable's storage suite, inside the real runtime
 
-Pi Durable has a 23-case conformance suite for storage backends. Pi's own tests run the Durable Object adapter against a Node SQLite stand-in. [`test/conformance/`](test/conformance) instead starts real workerd with `wrangler`, opens the adapter on a Durable Object's SQLite, and runs the whole suite there. That checks transactions, ordering, and value types as the real runtime implements them. All 23 cases run on every `npm run check`.
+Pi Durable has a 23-case conformance suite for storage backends. Pi's own tests run the Durable Object adapter against a Node SQLite stand-in. [`test/conformance/`](test/conformance) instead starts real workerd with `wrangler`, opens the adapter on a Durable Object's SQLite, and runs the whole suite there. That checks transactions, ordering, and value types as the real runtime implements them. The test requires exactly 23 results, all passing, on every `npm run check`.
 
 ### Every refresh shows the same page
 
@@ -105,7 +105,7 @@ npm run dev          # http://localhost:8787
 
 Workers AI and Artifacts have no local simulator, so `npm run dev` uses the real services through remote bindings. Local runs spend your Workers AI quota and create real Artifacts repos, one per conversation. For costs, see [Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/) and the [Artifacts docs](https://developers.cloudflare.com/artifacts/).
 
-`npm run dev` skips the Access check, and only for requests to `localhost`, `127.0.0.1`, or `[::1]`.
+`npm run dev` skips the Access check, and only for requests to `localhost`, `127.0.0.1`, or `[::1]`. Run one dev server per checkout: two servers on the same `.wrangler/state` folder both run the same Durable Object and corrupt its SQLite.
 
 ```sh
 npm run check                              # typecheck, lint, tests, storage suite in workerd, build, config checks
@@ -143,7 +143,7 @@ Then open your hostname, sign in through Access, and give it a task.
 | `403 Access token rejected: …` (any other reason) | The token is expired, malformed, or from another team. The reason names the failed check. | Sign in again. If it repeats, check `ACCESS_TEAM_DOMAIN`. |
 | A write fails and the agent reports an error | Artifacts is not enabled, or the push was rejected twice in a row (a push is retried once). | Enable Artifacts, then send the task again. |
 | **Working** for a long time | The model or Artifacts is slow. The watchdog revives a dead instance within 15 seconds, but it does not cancel a slow live one. | Press **Kill it**. The comeback resumes the task. |
-| A conversation never loads after a kill | A known open bug: a kill at the wrong moment can leave Pi Durable's live document unreadable (`unresolvable path: ["generation"]`). | Press **New** for a new conversation. If you can reproduce it, please open an issue with the steps. |
+| Locally, a conversation stops loading with `unresolvable path: ["generation"]` | Two `wrangler dev` servers shared one `.wrangler/state` folder, so two copies of the same Durable Object wrote to one SQLite file. That cannot happen on Cloudflare, where each object runs once. | Run one dev server per folder, or give each its own `--persist-to`. Press **New** for a fresh conversation. |
 
 The Worker also refuses writes and WebSocket connections from other origins, so another site cannot drive your agent through your signed-in browser.
 

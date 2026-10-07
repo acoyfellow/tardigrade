@@ -16,7 +16,7 @@ test("Pi Durable's storage conformance suite passes on Durable Object SQLite ins
 	try {
 		const results = decodeResults(await (await worker.fetch("http://suite/")).text());
 
-		expect(results.length).toBeGreaterThan(20);
+		expect(results).toHaveLength(23);
 		expect(results.filter((result) => !result.ok)).toEqual([]);
 	} finally {
 		await worker.dispose();

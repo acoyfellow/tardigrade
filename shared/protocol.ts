@@ -47,7 +47,9 @@ export const BackEvent = Schema.TaggedStruct("Back", { at: Schema.Number, afterB
 
 export const FailedEvent = Schema.TaggedStruct("Failed", { at: Schema.Number, afterBlock: Schema.Number, reason: Schema.String });
 
-export const TimelineEvent = Schema.Union([KilledEvent, BackEvent, FailedEvent]);
+export const ResumedEvent = Schema.TaggedStruct("Resumed", { at: Schema.Number, afterBlock: Schema.Number, lives: Schema.Number });
+
+export const TimelineEvent = Schema.Union([KilledEvent, BackEvent, ResumedEvent, FailedEvent]);
 
 export type TimelineEvent = typeof TimelineEvent.Type;
 
