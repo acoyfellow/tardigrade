@@ -1,74 +1,16 @@
 import { DurableObject } from "cloudflare:workers";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { Type } from "@earendil-works/pi-ai";
-import { createModels } from "@earendil-works/pi-ai/models";
-import { cloudflareWorkersAIProvider } from "@earendil-works/pi-ai/providers/cloudflare-workers-ai";
-import { type Conversation, createRegistry, defineExtension, defineTool, Harness, LiveDoc, section } from "@earendil-works/pi-durable";
-import { Clock, Effect, Option, Result, Schema } from "effect";
-import {
-	BlocksFrame,
-	BackEvent,
-	BusyFrame,
-	type ConversationName,
-	EventsFrame,
-	FailedEvent,
-	KilledEvent,
-	ResumedEvent,
-	FileNotFound,
-	FilesFrame,
-	KilledFrame,
-	KillOutcomeJson,
-	type Live,
-	LiveFrame,
-	NothingRunning,
-	ReadOutcomeJson,
-	RevivedFrame,
-	RunFailedFrame,
-	SendOutcomeJson,
-	type ServerFrame,
-	ServerFrameJson,
-	type Snapshot,
-	SnapshotJson,
-	SnapshotFrame,
-	StillWorking,
-	type TimelineEvent,
-} from "../shared/protocol";
-import { Repo, type RepoFiles } from "./files";
-import { openDurableObjectSqliteStorage } from "./vendor/pi-durable-do-sqlite";
-import { bindingAuthContext, routeWorkersAIThroughBinding } from "./model";
+import { Effect, Layer, ManagedRuntime, Option, Schema } from "effect";
+import { type ConversationName, KillOutcomeJson, ReadOutcomeJson, SendOutcomeJson, SnapshotFrame, SnapshotJson } from "../shared/protocol";
+import { Agent as Conversation } from "./conversation";
+import { Repo } from "./files";
+import { type HarnessFailed, Pi } from "./harness";
+import { routeWorkersAIThroughBinding } from "./model";
 import { Meta } from "./meta";
-import { decodePiLiveState, decodePiMessages, isBetweenSteps, type PiLiveState, toBlocks, toLive } from "./view";
+import { Broadcast, DurableObjectContext, Store } from "./services";
 
 export const DEFAULT_MODEL = "@cf/zai-org/glm-5.3";
 
-const CONTEXT = BACKGROUND_CONTEXT;
-
-const HISTORY_LIMIT = 500;
-
-const WATCHDOG_MS = 15_000;
-
-const REVIVE_AFTER_MS = 1_000;
-
-const KILL_COOLDOWN_MS = 1_000;
-
-const PROMPT = [
-	"You are tardigrade, a coding agent whose work survives crashes.",
-	"Your workspace is a git repository. Every file you write becomes a commit.",
-	"Use list_files and read_file before changing existing files. Use write_file to create or replace a whole file.",
-	"Do the work instead of describing it. When finished, reply in one or two short sentences.",
-].join("\n");
-
 export type AgentEnv = { readonly AI: Ai; readonly ARTIFACTS: Artifacts; readonly MODEL?: string };
-
-const Pending = Schema.Struct({ id: Schema.String, text: Schema.String });
-
-const PendingJson = Schema.fromJsonString(Pending);
-
-const encodePending = Schema.encodeSync(PendingJson);
-
-const decodePending = Schema.decodeUnknownOption(PendingJson);
-
-const encodeFrame = Schema.encodeSync(ServerFrameJson);
 
 const encodeSnapshot = Schema.encodeSync(SnapshotJson);
 
@@ -78,310 +20,89 @@ const encodeKill = Schema.encodeSync(KillOutcomeJson);
 
 const encodeRead = Schema.encodeSync(ReadOutcomeJson);
 
-const text = (value: string) => ({ content: [{ type: "text" as const, text: value }] });
+const layerFor = (ctx: DurableObjectState, env: AgentEnv, name: ConversationName) => {
+	const model = env.MODEL ?? DEFAULT_MODEL;
+	const object = Layer.mergeAll(DurableObjectContext.layer(ctx), Store.layer(ctx.storage));
+	const broadcast = Broadcast.layer.pipe(Layer.provideMerge(object));
+	const pi = Pi.layer({ storage: ctx.storage, model }).pipe(Layer.provide(Repo.layer(env.ARTIFACTS, `tg-${name}`)), Layer.provideMerge(broadcast));
 
-class SocketSendFailed extends Schema.TaggedError<SocketSendFailed>()("SocketSendFailed", { reason: Schema.String }) {}
+	return Conversation.layer(model).pipe(Layer.provideMerge(pi));
+};
 
-type Opened = { readonly conversation: Conversation; readonly repo: RepoFiles };
+const RESERVED_CLOSE_CODES = new Set([1005, 1006, 1015]);
+
+const sendableCloseCode = (code: number): number => (RESERVED_CLOSE_CODES.has(code) ? 1000 : code);
+
+type Services = Conversation | Broadcast | Store;
+
+const withAgent = <A, E>(use: (agent: Conversation["Service"]) => Effect.Effect<A, E>): Effect.Effect<A, E, Conversation> =>
+	Effect.gen(function* () {
+		return yield* use(yield* Conversation);
+	});
 
 export class Agent extends DurableObject<AgentEnv> {
-	private readonly meta: Meta;
-	private opened: Option.Option<Opened> = Option.none();
-	private opening: Option.Option<Promise<Opened>> = Option.none();
-	private driving = false;
-	private live: Option.Option<PiLiveState> = Option.none();
-	private lastLiveChange = 0;
+	private runtime: Option.Option<ManagedRuntime.ManagedRuntime<Services, HarnessFailed>> = Option.none();
 
 	constructor(ctx: DurableObjectState, env: AgentEnv) {
 		super(ctx, env);
-		this.meta = new Meta(ctx.storage);
 		routeWorkersAIThroughBinding(env.AI);
 	}
 
-	private get model(): string {
-		return this.env.MODEL ?? DEFAULT_MODEL;
-	}
+	private run<A, E>(name: Option.Option<ConversationName>, effect: Effect.Effect<A, E, Services>): Promise<A> {
+		const runtime = Option.getOrElse(this.runtime, () => {
+			const meta = new Meta(this.ctx.storage);
 
-	private broadcast(frame: ServerFrame): void {
-		const data = encodeFrame(frame);
+			Option.map(name, (value) => meta.claimName(value));
 
-		for (const socket of this.ctx.getWebSockets()) {
-			Effect.runSync(
-				Effect.try({ try: () => socket.send(data), catch: (cause) => new SocketSendFailed({ reason: String(cause) }) }).pipe(
-					Effect.catchTag("SocketSendFailed", () => Effect.sync(() => socket.close(1011, "send failed"))),
-				),
-			);
-		}
-	}
+			const created = ManagedRuntime.make(layerFor(this.ctx, this.env, meta.name()));
 
-	private tools(repo: RepoFiles) {
-		const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
+			this.runtime = Option.some(created);
 
-		return [
-			defineTool({
-				name: "list_files",
-				description: "List every file in the repository.",
-				parameters: Type.Object({}),
-				replay: "safe",
-				execute: () => run(repo.list.pipe(Effect.map((files) => text(files.length > 0 ? files.join("\n") : "(empty repository)")))),
-			}),
-			defineTool({
-				name: "read_file",
-				description: "Read a file from the repository.",
-				parameters: Type.Object({ path: Type.String() }),
-				replay: "safe",
-				execute: (args) =>
-					run(
-						repo.read(args.path).pipe(
-							Effect.map(Option.match({ onSome: text, onNone: () => text(`No such file: ${args.path}`) })),
-							Effect.catchTag("InvalidPath", ({ path }) => Effect.succeed(text(`Invalid path: ${path}`))),
-						),
-					),
-			}),
-			defineTool({
-				name: "write_file",
-				description: "Create or replace a whole file. Each call is one git commit.",
-				parameters: Type.Object({
-					path: Type.String(),
-					content: Type.String(),
-					message: Type.Optional(Type.String({ description: "Commit message" })),
-				}),
-				replay: "safe",
-				executionMode: "sequential",
-				execute: (args) =>
-					run(
-						repo.write(args.path, args.content, args.message ?? `Write ${args.path}`).pipe(
-							Effect.tap(() => Effect.sync(() => this.ctx.waitUntil(this.pushFiles(repo)))),
-							Effect.map(({ oid, changed }) => text(`${changed ? `Committed ${oid.slice(0, 7)}` : "Already up to date"}: ${args.path}`)),
-						),
-					),
-			}),
-		];
-	}
-
-	private open(name: Option.Option<ConversationName>): Promise<Opened> {
-		if (Option.isSome(this.opened)) return Promise.resolve(this.opened.value);
-
-		if (Option.isSome(this.opening)) return this.opening.value;
-
-		Option.map(name, (value) => this.meta.claimName(value));
-
-		const opening = this.openHarness().finally(() => {
-			this.opening = Option.none();
+			return created;
 		});
 
-		this.opening = Option.some(opening);
-
-		return opening;
+		return runtime.runPromise(effect);
 	}
 
-	private async openHarness(): Promise<Opened> {
-		const repo = await Effect.runPromise(Effect.service(Repo).pipe(Effect.provide(Repo.layer(this.env.ARTIFACTS, `tg-${this.meta.name()}`))));
-		const models = createModels({ authContext: bindingAuthContext });
-
-		models.setProvider(cloudflareWorkersAIProvider());
-
-		const registry = createRegistry();
-
-		registry.install(defineExtension({ name: "tardigrade", sections: [section("preamble", () => PROMPT, { tag: false })], tools: this.tools(repo) }));
-
-		const harness = await Harness.open(await openDurableObjectSqliteStorage(this.ctx.storage), { models, registry }, CONTEXT);
-		const conversation = await harness.root(CONTEXT, { agent: { model: { provider: "cloudflare-workers-ai", modelId: this.model } } });
-		const watch = await harness.watchDoc(LiveDoc, conversation.id, CONTEXT);
-		const opened = { conversation, repo };
-
-		watch?.start(async (value) => this.onLive(opened, decodePiLiveState(value)));
-		this.opened = Option.some(opened);
-		harness.resume();
-		this.resumePending(opened);
-
-		return opened;
+	getSnapshot(name: ConversationName): Promise<string> {
+		return this.run(Option.some(name), withAgent((agent) => agent.snapshot).pipe(Effect.map(encodeSnapshot)));
 	}
 
-	private async onLive(opened: Opened, live: Option.Option<PiLiveState>): Promise<void> {
-		this.live = live;
-		this.lastLiveChange = Date.now();
-		this.broadcast(LiveFrame.make({ live: this.liveView() }));
-
-		if (this.driving && Option.match(this.live, { onNone: () => true, onSome: isBetweenSteps })) {
-			this.ctx.waitUntil(this.pushBlocks(opened));
-		}
+	send(name: ConversationName, text: string): Promise<string> {
+		return this.run(Option.some(name), withAgent((agent) => agent.send(text)).pipe(Effect.result, Effect.map(encodeSend)));
 	}
 
-	private liveView(): Option.Option<Live> {
-		const quietForMs = Date.now() - this.lastLiveChange;
-
-		return Option.map(this.live, (state) => toLive(state, quietForMs));
+	kill(name: ConversationName): Promise<string> {
+		return this.run(Option.some(name), withAgent((agent) => agent.kill).pipe(Effect.result, Effect.map(encodeKill)));
 	}
 
-	private async blockCount(opened: Opened): Promise<number> {
-		return (await this.blocks(opened)).length;
-	}
-
-	private record(event: TimelineEvent): void {
-		this.broadcast(EventsFrame.make({ events: this.meta.addEvent(event) }));
-	}
-
-	private resumePending(opened: Opened): void {
-		const pending = this.meta.pending().pipe(Option.flatMap(decodePending));
-		const killedAt = this.meta.takeKill();
-
-		this.ctx.waitUntil(this.recordComeback(opened, killedAt, Option.isSome(pending)));
-		Option.map(pending, ({ id, text }) => this.drive(opened, id, text));
-	}
-
-	private async recordComeback(opened: Opened, killedAt: Option.Option<number>, resumed: boolean): Promise<void> {
-		if (Option.isNone(killedAt) && !resumed) return;
-
-		const at = Date.now();
-
-		this.meta.recordRevival(at);
-		const afterBlock = await this.blockCount(opened);
-
-		if (Option.isNone(killedAt)) {
-			this.meta.recordRestart();
-			this.record(ResumedEvent.make({ at, afterBlock, lives: this.meta.lives() }));
-		} else {
-			this.record(BackEvent.make({ at, afterBlock, afterMs: at - killedAt.value, lives: this.meta.lives(), resumed }));
-		}
-
-		this.broadcast(RevivedFrame.make({ lives: this.meta.lives() }));
-	}
-
-	private drive(opened: Opened, id: string, input: string): void {
-		if (this.driving) return;
-
-		this.driving = true;
-		this.broadcast(BusyFrame.make({ busy: true }));
-		this.ctx.waitUntil(this.runToEnd(opened, id, input));
-	}
-
-	private async runToEnd(opened: Opened, id: string, input: string): Promise<void> {
-		await this.ctx.storage.setAlarm(Date.now() + WATCHDOG_MS);
-
-		try {
-			const submission = await opened.conversation.submit({ type: "input", content: input, requestId: id }, CONTEXT);
-			const settled = await submission.wait(CONTEXT);
-
-			if (settled.status !== "done") await this.recordFailure(opened, `Run ended: ${settled.status}`);
-		} catch (error) {
-			await this.recordFailure(opened, String(error));
-		} finally {
-			this.meta.clearPending();
-			this.driving = false;
-			this.live = Option.none();
-			await this.ctx.storage.deleteAlarm();
-			this.broadcast(BusyFrame.make({ busy: false }));
-			this.broadcast(SnapshotFrame.make({ snapshot: await this.snapshot(opened) }));
-		}
-	}
-
-	private async recordFailure(opened: Opened, reason: string): Promise<void> {
-		this.record(FailedEvent.make({ at: Date.now(), afterBlock: await this.blockCount(opened), reason }));
-		this.broadcast(RunFailedFrame.make({ reason }));
-	}
-
-	private async blocks(opened: Opened) {
-		const page = await opened.conversation.entries({}, HISTORY_LIMIT, undefined, CONTEXT);
-		const messages = [...page.items].reverse().flatMap((entry) => entry.model ?? []);
-
-		return toBlocks(Option.getOrElse(decodePiMessages(messages), () => []));
-	}
-
-	private async pushBlocks(opened: Opened): Promise<void> {
-		this.broadcast(BlocksFrame.make({ blocks: await this.blocks(opened) }));
-	}
-
-	private async pushFiles(repo: RepoFiles): Promise<void> {
-		const { files, commits } = await Effect.runPromise(Effect.all({ files: repo.list, commits: repo.log }));
-
-		this.broadcast(FilesFrame.make({ files, commits }));
-	}
-
-	private async snapshot(opened: Opened): Promise<Snapshot> {
-		const [blocks, files, commits] = await Promise.all([this.blocks(opened), Effect.runPromise(opened.repo.list), Effect.runPromise(opened.repo.log)]);
-
-		return {
-			name: this.meta.name(),
-			model: this.model,
-			lives: this.meta.lives(),
-			busy: this.driving,
-			blocks,
-			live: this.liveView(),
-			files,
-			commits,
-			events: this.meta.events(),
-			killedAt: this.meta.killedAt(),
-		};
-	}
-
-	async getSnapshot(name: ConversationName): Promise<string> {
-		return encodeSnapshot(await this.snapshot(await this.open(Option.some(name))));
-	}
-
-	async send(name: ConversationName, input: string): Promise<string> {
-		const opened = await this.open(Option.some(name));
-
-		if (Option.isSome(this.meta.pending())) return encodeSend(Result.fail(new StillWorking()));
-
-		const id = crypto.randomUUID();
-
-		this.meta.setPending(encodePending({ id, text: input }));
-		this.drive(opened, id, input);
-
-		return encodeSend(Result.succeed({ id }));
-	}
-
-	async kill(name: ConversationName): Promise<string> {
-		const opened = await this.open(Option.some(name));
-
-		const killedAt = Date.now();
-
-		if (Option.isNone(this.meta.pending()) || Option.isSome(this.meta.killedAt()) || this.meta.revivedWithin(killedAt, KILL_COOLDOWN_MS)) {
-			return encodeKill(Result.fail(new NothingRunning()));
-		}
-
-		this.meta.recordKill(killedAt);
-		this.meta.addEvent(KilledEvent.make({ at: killedAt, afterBlock: await this.blockCount(opened), wasBusy: this.driving }));
-		await this.ctx.storage.setAlarm(killedAt + REVIVE_AFTER_MS);
-		await this.ctx.storage.sync();
-		this.broadcast(EventsFrame.make({ events: this.meta.events() }));
-		this.broadcast(KilledFrame.make({ killedAt }));
-		this.ctx.abort("killed from the UI");
-
-		return encodeKill(Result.succeed(undefined));
-	}
-
-	async readFile(name: ConversationName, path: string): Promise<string> {
-		const { repo } = await this.open(Option.some(name));
-		const missing = () => encodeRead(Result.fail(new FileNotFound({ path })));
-
-		return Effect.runPromise(
-			repo.read(path).pipe(
-				Effect.map(Option.match({ onSome: (body) => encodeRead(Result.succeed(body)), onNone: missing })),
-				Effect.catchTag("InvalidPath", () => Effect.sync(missing)),
-			),
-		);
+	readFile(name: ConversationName, path: string): Promise<string> {
+		return this.run(Option.some(name), withAgent((agent) => agent.readFile(path)).pipe(Effect.result, Effect.map(encodeRead)));
 	}
 
 	override async fetch(request: Request): Promise<Response> {
-		const name = this.meta.nameFromUrl(request.url);
-		const opened = await this.open(name);
+		const name = new Meta(this.ctx.storage).nameFromUrl(request.url);
 		const pair = new WebSocketPair();
 
 		this.ctx.acceptWebSocket(pair[1]);
-		pair[1].send(encodeFrame(SnapshotFrame.make({ snapshot: await this.snapshot(opened) })));
+		await this.run(
+			name,
+			Effect.gen(function* () {
+				const agent = yield* Conversation;
+				const broadcast = yield* Broadcast;
+
+				yield* broadcast.sendTo(pair[1], SnapshotFrame.make({ snapshot: yield* agent.snapshot }));
+			}),
+		);
 
 		return new Response(null, { status: 101, webSocket: pair[0] });
 	}
 
 	override async webSocketClose(socket: WebSocket, code: number): Promise<void> {
-		socket.close(code, "bye");
+		socket.close(sendableCloseCode(code), "bye");
 	}
 
 	override async alarm(): Promise<void> {
-		await this.open(Option.none());
-
-		if (Option.isSome(this.meta.pending())) await this.ctx.storage.setAlarm((await Effect.runPromise(Clock.currentTimeMillis)) + WATCHDOG_MS);
+		await this.run(Option.none(), withAgent((agent) => agent.keepAlive));
 	}
 }
