@@ -1,0 +1,33 @@
+AGENTS.md
+  s_d58794dec92dc7::t_4cec924184b143 20
+README.md
+  s_d58794dec92dc7::t_42015e09913e5a 11,36-37,43,60,82,108,146
+client/src/story.test.ts
+  s_d58794dec92dc7::t_4a9e4e293a50dc 10,173-186
+client/src/view/transcript.ts
+  s_d58794dec92dc7::t_3dbac427d1d3f6 90
+shared/protocol.ts
+  s_d58794dec92dc7::t_7e94d0addcbaee 50-52
+test/conformance/conformance.test.ts
+  s_d58794dec92dc7::t_eae960cf356e94 19
+worker/agent.ts
+  s_d58794dec92dc7::t_d3e9b6cd3c862f 16,52-53,83-84,109-113,234,238-247,340-343,346-347
+worker/meta.ts
+  s_d58794dec92dc7::t_d420c078dcdc60 28,91-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "445d6a1de7f7b39d4ad1e0837363dd0710c0131c",
+  "prompts": {},
+  "sessions": {
+    "s_d58794dec92dc7": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a115e6-5bb3-75ac-b511-2988f1aebfad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jordan Coeyman <jcoeyman@cloudflare.com>"
+    }
+  }
+}
