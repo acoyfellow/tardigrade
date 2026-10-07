@@ -1,0 +1,23 @@
+README.md
+  s_d58794dec92dc7::t_d8ca01c8f96975 179,217
+package.json
+  s_d58794dec92dc7::t_d5065021a05fe1 17
+scripts/dev.mjs
+  s_d58794dec92dc7::t_4ba10fabf8235c 1-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "54d25636cc53362a46f9a86ef0041e74aa2a0211",
+  "prompts": {},
+  "sessions": {
+    "s_d58794dec92dc7": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a115e6-5bb3-75ac-b511-2988f1aebfad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jordan Coeyman <jcoeyman@cloudflare.com>"
+    }
+  }
+}
