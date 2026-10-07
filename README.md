@@ -2,34 +2,105 @@
 
 # tardigrade
 
-**A coding agent you can kill mid-task. It comes back and finishes the job.**
+**A reference app for [Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable), [Effect v4](https://effect.website), and [Foldkit](https://foldkit.dev) on Cloudflare: a coding agent you can kill mid-task, that comes back and finishes.**
 
-Give it a task, press **Kill it** while it works, and watch. Its Durable Object calls `ctx.abort()` on itself, so memory, sockets, and the model call in flight are lost. A second later a fresh instance reads the same SQLite, continues from the last saved step, and finishes. The conversation, the files, and the record of every kill survive, in every tab and after a refresh.
+Give it a task and press **Kill it** while it works. Its Durable Object calls `ctx.abort()` on itself, so memory, sockets, and the model call in flight are gone. A second later a fresh instance reads the same SQLite, continues from the last saved step, and finishes. The conversation, the files, and the record of every kill survive, in every tab and after a refresh.
 
 ![Five kills in a row. Each shows Killed, then Back after, and the task still ends with one commit.](docs/kill5.gif)
 
 *A real run: five kills, one every eight seconds. The kills play at 1.6×, the rest at 4×. It ends with 6 lives, one file, and one commit. [MP4](docs/kill5.mp4).*
 
-tardigrade is a reference app to fork and run for yourself behind Cloudflare Access. It is not a hosted product, and it is not safe on the open internet: anyone who can open it spends your Workers AI budget.
+tardigrade is a reference app to read and fork, and to run for yourself behind Cloudflare Access. It is not a hosted product, and it is not safe on the open internet: anyone who can open it spends your Workers AI budget.
 
-## How it works
+## What each piece shows
+
+### Pi Durable: the agent survives `ctx.abort()`
+
+Pi Durable commits each model turn and each tool result to the Durable Object's SQLite before the next step starts. After a crash, the same request is submitted again under the same ID, and Pi continues from the last commit. Each tool declares that running it twice is safe ([`worker/harness.ts`](worker/harness.ts)):
+
+```ts
+defineTool({
+	name: "write_file",
+	description: "Create or replace a whole file. Each call is one git commit.",
+	parameters: Type.Object({ path: Type.String(), content: Type.String(), message: Type.Optional(Type.String()) }),
+	replay: "safe",
+	executionMode: "sequential",
+	execute: (args) => run(repo.write(args.path, args.content, args.message ?? `Write ${args.path}`).pipe(/* … */)),
+}),
+```
+
+The SQLite adapter that lets Pi Durable use a Durable Object's storage is checked against Pi's own 23-case storage suite inside real workerd ([`test/conformance/`](test/conformance)).
+
+### Effect v4: the Durable Object is an Effect program
+
+The Durable Object class is a thin shell. It builds one `ManagedRuntime` per object from Layers, and every RPC method runs an Effect inside it ([`worker/agent.ts`](worker/agent.ts)):
+
+```ts
+const layerFor = (ctx: DurableObjectState, env: AgentEnv, name: ConversationName) => {
+	const model = env.MODEL ?? DEFAULT_MODEL;
+	const object = Layer.mergeAll(DurableObjectContext.layer(ctx), Store.layer(ctx.storage));
+	const broadcast = Broadcast.layer.pipe(Layer.provideMerge(object));
+	const pi = Pi.layer({ storage: ctx.storage, model }).pipe(Layer.provide(Repo.layer(env.ARTIFACTS, `tg-${name}`)), Layer.provideMerge(broadcast));
+
+	return Conversation.layer(model).pipe(Layer.provideMerge(pi));
+};
+```
+
+The Pi harness is a scoped resource. `Effect.acquireRelease` opens it and closes it with the runtime, and Pi's live document becomes a `Stream` ([`worker/harness.ts`](worker/harness.ts)). Kill is an `Effect.gen` with a typed failure. It is stored and synced before any tab hears about it ([`worker/conversation.ts`](worker/conversation.ts)):
+
+```ts
+const kill = Effect.gen(function* () {
+	const at = yield* now;
+	const running = Option.isSome(store.pending()) && Option.isNone(store.killedAt()) && !store.revivedWithin(at, KILL_COOLDOWN_MS);
+
+	if (!running) return yield* Effect.fail(new NothingRunning());
+
+	store.recordKill(at);
+	store.addEvent(KilledEvent.make({ at, afterBlock: yield* blockCount, wasBusy: yield* Ref.get(driving) }));
+	yield* object.setAlarm(at + REVIVE_AFTER_MS);
+	yield* object.flush;
+	yield* broadcast.send(EventsFrame.make({ events: store.events() }));
+	yield* broadcast.send(KilledFrame.make({ killedAt: at }));
+
+	return yield* object.abort("killed from the UI");
+});
+```
+
+On the wire, [`shared/protocol.ts`](shared/protocol.ts) defines every request, frame, timeline event, and error as a Schema, and both sides import it. Requests are an `effect/rpc` group over HTTP. Pushes are Schema-encoded frames over a hibernatable WebSocket.
+
+Effect does not make the agent durable. Pi Durable and SQLite do that. Effect makes the lifetimes, the failures, and the wire format explicit.
+
+### Foldkit: the UI is a pure `update`, tested without a browser
+
+The page is one Model, one `update`, and typed Messages. The socket is a managed resource keyed on a connection epoch, so a dropped socket reconnects on its own. Every kill-and-comeback scenario is a story test that runs in milliseconds ([`client/src/story.test.ts`](client/src/story.test.ts)):
+
+```ts
+test("a page opened after a kill, before the comeback, shows the kill and that it is coming back", () => {
+	story(
+		update,
+		given(fresh),
+		message(Message.SocketOpened()),
+		message(frame(SnapshotFrame.make({ snapshot: snapshot({ busy: true, lives: 2, events: [killed], killedAt: Option.some(5_000) }) }))),
+		model((current) => {
+			expect(current.events).toEqual([killed]);
+			expect(current.phase).toEqual(Phase.Reviving({ killedAt: 5_000 }));
+		}),
+	);
+});
+```
+
+## How it fits together
 
 ```
 browser (Foldkit)
    │  effect/rpc over HTTP ─────▶ Worker: checks Access, forwards
    │  WebSocket (hibernatable) ─▶ Worker: checks Access, passes the socket through
    ▼
-Durable Object "Agent", one per conversation
+Durable Object "Agent", one per conversation, an Effect ManagedRuntime
    ├─ Pi Durable harness, saved in the object's SQLite
    ├─ timeline of kills and comebacks, in the same storage
    └─ files: one Artifacts git repo, a commit per write
 ```
-
-- **[Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable)** is the agent harness. Each model turn and each tool result is committed to SQLite before the next one starts. After a crash, the same request ID is submitted again, and Pi Durable continues from the last commit instead of starting over.
-- **A Durable Object** holds one conversation: the harness, its storage, and the open WebSockets. The Worker checks Access and forwards. The WebSocket goes straight through to the object, so the object can hibernate while idle.
-- **Cloudflare Artifacts** holds the files, in one git repo per conversation. Each `write_file` is a commit and a push, done with isomorphic-git on an in-memory filesystem.
-- **[Effect](https://effect.website) v4** runs both sides. [`shared/protocol.ts`](shared/protocol.ts) defines every request, frame, event, and error as a Schema, and both sides import it. Effect gives typed errors at each boundary. It does not make the agent durable; Pi Durable and SQLite do that.
-- **[Foldkit](https://foldkit.dev)** is the UI: one Model, one `update`, typed Messages, and story tests that run without a browser. Tailwind styles it, and Vite builds it into static assets that the Worker serves.
 
 ### What happens when you press Kill it
 
@@ -154,7 +225,10 @@ The Worker also refuses writes and WebSocket connections from other origins, so 
 | `shared/protocol.ts` | Schemas for every request, frame, timeline event, and error, imported by both sides |
 | `worker/index.ts` | Checks Access on every request, serves the RPC group, checks the origin, and forwards the WebSocket to the conversation's Durable Object |
 | `worker/access.ts` | Verifies the Access token: signature, audience, issuer, and expiry |
-| `worker/agent.ts` | The `Agent` Durable Object: harness, tools, kill and comeback, watchdog, broadcast |
+| `worker/agent.ts` | The `Agent` Durable Object: a thin shell that builds one Effect `ManagedRuntime` from Layers and runs each RPC in it |
+| `worker/conversation.ts` | The agent as an Effect service: send, kill, comeback, the run to the end, and the watchdog |
+| `worker/harness.ts` | The Pi Durable harness as a scoped Layer: tools, the live document as a `Stream`, and the run |
+| `worker/services.ts` | Small services for the Durable Object context, its storage, and the WebSocket broadcast |
 | `worker/meta.ts` | Small keyed state in the object's storage: the pending request, lives, and the timeline |
 | `worker/view.ts` | Turns Pi's messages into the blocks the page shows |
 | `worker/files.ts`, `worker/memfs.ts` | One Artifacts git repo per conversation, with isomorphic-git on an in-memory filesystem |
