@@ -1,0 +1,27 @@
+README.md
+  s_d58794dec92dc7::t_fa445a8c42f87d 11,167,265-266
+test/revival/stored-repo.ts
+  s_d58794dec92dc7::t_a3670ec03e01ff 1-42
+test/revival/worker.ts
+  s_d58794dec92dc7::t_438d83a2c92edf 5,34
+worker/conversation.ts
+  s_d58794dec92dc7::t_53d1792f65f983 143,149,151-155,157,159-164,166-167
+worker/index.ts
+  s_d58794dec92dc7::t_fa121be70b3e2f 1,4,42-49,57-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2d04128f4ccc3a2c0581fb3e2ec23561e3f04721",
+  "prompts": {},
+  "sessions": {
+    "s_d58794dec92dc7": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a115e6-5bb3-75ac-b511-2988f1aebfad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jordan Coeyman <jcoeyman@cloudflare.com>"
+    }
+  }
+}
