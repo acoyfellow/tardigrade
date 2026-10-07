@@ -1,11 +1,21 @@
 import { Option, Schema } from "effect";
-import { ConversationName } from "../shared/protocol";
+import { ConversationName, TimelineEvent } from "../shared/protocol";
 
 const decodeName = Schema.decodeUnknownOption(ConversationName);
 
 const decodeText = Schema.decodeUnknownOption(Schema.String);
 
 const decodeCount = Schema.decodeUnknownOption(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)));
+
+const EventsJson = Schema.fromJsonString(Schema.Array(TimelineEvent));
+
+const decodeEvents = Schema.decodeUnknownOption(EventsJson);
+
+const encodeEvents = Schema.encodeSync(EventsJson);
+
+const decodeTime = Schema.decodeUnknownOption(Schema.Number);
+
+const EVENT_LIMIT = 200;
 
 const FALLBACK_NAME = ConversationName.make("default");
 
@@ -14,6 +24,7 @@ const Key = {
 	pending: "pending",
 	lives: "lives",
 	killed: "killed",
+	events: "events",
 } as const;
 
 export class Meta {
@@ -55,12 +66,32 @@ export class Meta {
 		return Option.getOrElse(decodeCount(this.kv.get(Key.lives)), () => 1);
 	}
 
-	recordKill(): void {
-		this.kv.put(Key.lives, this.lives() + 1);
-		this.kv.put(Key.killed, true);
+	events(): ReadonlyArray<TimelineEvent> {
+		return Option.getOrElse(decodeEvents(this.kv.get(Key.events)), () => []);
 	}
 
-	takeKill(): boolean {
-		return this.kv.delete(Key.killed);
+	addEvent(event: TimelineEvent): ReadonlyArray<TimelineEvent> {
+		const events = [...this.events(), event].slice(-EVENT_LIMIT);
+
+		this.kv.put(Key.events, encodeEvents(events));
+
+		return events;
+	}
+
+	killedAt(): Option.Option<number> {
+		return decodeTime(this.kv.get(Key.killed));
+	}
+
+	recordKill(at: number): void {
+		this.kv.put(Key.lives, this.lives() + 1);
+		this.kv.put(Key.killed, at);
+	}
+
+	takeKill(): Option.Option<number> {
+		const at = this.killedAt();
+
+		this.kv.delete(Key.killed);
+
+		return at;
 	}
 }

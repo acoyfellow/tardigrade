@@ -2,8 +2,11 @@ import { Option } from "effect";
 import { Command, given, message, model, story } from "foldkit/story";
 import { describe, expect, test } from "vitest";
 import {
+	BackEvent,
 	BusyFrame,
 	ConversationName,
+	EventsFrame,
+	KilledEvent,
 	KilledFrame,
 	ReplyBlock,
 	RevivedFrame,
@@ -14,7 +17,7 @@ import {
 import { Kill, Send, ShowConversation } from "./command";
 import { initialModel } from "./main";
 import { Message } from "./message";
-import { Event, Phase } from "./model";
+import { Phase } from "./model";
 import { update } from "./update";
 
 const name = ConversationName.make("c-story");
@@ -30,6 +33,8 @@ const snapshot = (overrides: Partial<Snapshot>): Snapshot => ({
 	live: Option.none(),
 	files: [],
 	commits: [],
+	events: [],
+	killedAt: Option.none(),
 	...overrides,
 });
 
@@ -92,7 +97,7 @@ describe("sending", () => {
 			Command.resolve(ShowConversation, Message.CompletedNavigation()),
 			model((current) => {
 				expect(current.busy).toBe(false);
-				expect(current.events.at(-1)?.event).toEqual(Event.Failed({ reason: "Still working on the last message." }));
+				expect(current.localNotes.at(-1)?.reason).toBe("Still working on the last message.");
 			}),
 		);
 	});
@@ -105,33 +110,66 @@ describe("kill and revival", () => {
 		story(update, given(fresh), message(Message.ClickedKill()), Command.expectNone());
 	});
 
-	test("Kill it marks the agent dead and records when", () => {
+	const killed = KilledEvent.make({ at: 5_000, afterBlock: 0, wasBusy: true });
+
+	const back = BackEvent.make({ at: 7_900, afterBlock: 0, afterMs: 2_900, lives: 2, resumed: true });
+
+	test("Kill it marks the agent dead at once and asks the server to kill it", () => {
 		story(
 			update,
 			given({ ...working, now: 5_000 }),
 			message(Message.ClickedKill()),
 			model((current) => {
 				expect(current.phase).toEqual(Phase.Dead({ killedAt: 5_000 }));
-				expect(current.events.at(-1)?.event).toEqual(Event.Killed({ wasBusy: true }));
 			}),
 			Command.expectHas(Kill),
 			Command.resolve(Kill, Message.CompletedKill()),
 		);
 	});
 
-	test("a killed frame from another tab marks it dead exactly once", () => {
+	test("the kill shown on the page is the one the server recorded, shown once", () => {
 		story(
 			update,
 			given(working),
-			message(frame(KilledFrame.make({}))),
-			message(frame(KilledFrame.make({}))),
+			message(frame(KilledFrame.make({ killedAt: 5_000 }))),
+			message(frame(EventsFrame.make({ events: [killed] }))),
+			message(frame(KilledFrame.make({ killedAt: 5_000 }))),
+			message(frame(EventsFrame.make({ events: [killed] }))),
 			model((current) => {
-				expect(current.events.filter((placed) => Event.isAnyOf(["Killed"])(placed.event))).toHaveLength(1);
+				expect(current.events).toEqual([killed]);
+				expect(current.phase).toEqual(Phase.Dead({ killedAt: 5_000 }));
 			}),
 		);
 	});
 
-	test("after a kill, the socket drops, reconnects, and the page reports how long it was gone", () => {
+	test("a page opened after a kill, before the comeback, shows the kill and that it is coming back", () => {
+		story(
+			update,
+			given(fresh),
+			message(Message.SocketOpened()),
+			message(frame(SnapshotFrame.make({ snapshot: snapshot({ busy: true, lives: 2, events: [killed], killedAt: Option.some(5_000) }) }))),
+			model((current) => {
+				expect(current.events).toEqual([killed]);
+				expect(current.phase).toEqual(Phase.Reviving({ killedAt: 5_000 }));
+			}),
+		);
+	});
+
+	test("a page opened after the comeback shows the kill and the comeback, exactly as the first tab saw them", () => {
+		story(
+			update,
+			given(fresh),
+			message(Message.SocketOpened()),
+			message(frame(SnapshotFrame.make({ snapshot: snapshot({ busy: true, lives: 2, events: [killed, back] }) }))),
+			model((current) => {
+				expect(current.events).toEqual([killed, back]);
+				expect(current.phase._tag).toBe("Working");
+				expect(current.lives).toBe(2);
+			}),
+		);
+	});
+
+	test("after a kill, the socket drops and reconnects, and the server's events replace the local guess", () => {
 		story(
 			update,
 			given({ ...working, now: 5_000 }),
@@ -142,14 +180,13 @@ describe("kill and revival", () => {
 				expect(current.phase).toEqual(Phase.Reviving({ killedAt: 5_000 }));
 				expect(current.connectionEpoch).toBe(working.connectionEpoch + 1);
 			}),
-			message(Message.Ticked({ now: 7_900 })),
 			message(Message.SocketOpened()),
 			message(frame(RevivedFrame.make({ lives: 2 }))),
-			message(frame(SnapshotFrame.make({ snapshot: snapshot({ busy: true, lives: 2 }) }))),
+			message(frame(SnapshotFrame.make({ snapshot: snapshot({ busy: true, lives: 2, events: [killed, back] }) }))),
 			model((current) => {
 				expect(current.phase._tag).toBe("Working");
 				expect(current.lives).toBe(2);
-				expect(current.events.at(-1)?.event).toEqual(Event.Back({ afterMs: 2_900, lives: 2, resumed: true }));
+				expect(current.events).toEqual([killed, back]);
 			}),
 		);
 	});

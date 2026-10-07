@@ -38,6 +38,7 @@ export const initialModel = ({ name, now }: Flags): Model => ({
 	files: [],
 	commits: [],
 	events: [],
+	localNotes: [],
 	draft: "",
 	openFile: OpenFile.Closed(),
 	filesPanelOpen: false,

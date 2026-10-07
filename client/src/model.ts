@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { defineTaggedUnion } from "foldkit/schema";
-import { Block, Commit, ConversationName, Live } from "../../shared/protocol";
+import { Block, Commit, ConversationName, Live, TimelineEvent } from "../../shared/protocol";
 
 export const Phase = defineTaggedUnion({
 	Connecting: {},
@@ -12,17 +12,9 @@ export const Phase = defineTaggedUnion({
 
 export type Phase = typeof Phase.Type;
 
-export const Event = defineTaggedUnion({
-	Killed: { wasBusy: Schema.Boolean },
-	Back: { afterMs: Schema.Number, lives: Schema.Number, resumed: Schema.Boolean },
-	Failed: { reason: Schema.String },
-});
+export const LocalNote = Schema.Struct({ at: Schema.Number, afterBlock: Schema.Number, reason: Schema.String });
 
-export type Event = typeof Event.Type;
-
-export const PlacedEvent = Schema.Struct({ afterBlock: Schema.Number, event: Event });
-
-export type PlacedEvent = typeof PlacedEvent.Type;
+export type LocalNote = typeof LocalNote.Type;
 
 export const OpenFile = defineTaggedUnion({
 	Closed: {},
@@ -43,7 +35,8 @@ export const Model = Schema.Struct({
 	live: Schema.Option(Live),
 	files: Schema.Array(Schema.String),
 	commits: Schema.Array(Commit),
-	events: Schema.Array(PlacedEvent),
+	events: Schema.Array(TimelineEvent),
+	localNotes: Schema.Array(LocalNote),
 	draft: Schema.String,
 	openFile: OpenFile,
 	filesPanelOpen: Schema.Boolean,

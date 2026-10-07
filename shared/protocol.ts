@@ -41,6 +41,16 @@ export const Live = Schema.Struct({ ...ActivityLine.fields, blocks: Schema.Array
 
 export type Live = typeof Live.Type;
 
+export const KilledEvent = Schema.TaggedStruct("Killed", { at: Schema.Number, afterBlock: Schema.Number, wasBusy: Schema.Boolean });
+
+export const BackEvent = Schema.TaggedStruct("Back", { at: Schema.Number, afterBlock: Schema.Number, afterMs: Schema.Number, lives: Schema.Number, resumed: Schema.Boolean });
+
+export const FailedEvent = Schema.TaggedStruct("Failed", { at: Schema.Number, afterBlock: Schema.Number, reason: Schema.String });
+
+export const TimelineEvent = Schema.Union([KilledEvent, BackEvent, FailedEvent]);
+
+export type TimelineEvent = typeof TimelineEvent.Type;
+
 export const Snapshot = Schema.Struct({
 	name: ConversationName,
 	model: Schema.String,
@@ -50,6 +60,8 @@ export const Snapshot = Schema.Struct({
 	live: Schema.OptionFromNullOr(Live),
 	files: Schema.Array(Schema.String),
 	commits: Schema.Array(Commit),
+	events: Schema.Array(TimelineEvent),
+	killedAt: Schema.OptionFromNullOr(Schema.Number),
 });
 
 export type Snapshot = typeof Snapshot.Type;
@@ -64,13 +76,15 @@ export const FilesFrame = Schema.TaggedStruct("Files", { files: Schema.Array(Sch
 
 export const BusyFrame = Schema.TaggedStruct("Busy", { busy: Schema.Boolean });
 
-export const KilledFrame = Schema.TaggedStruct("Killed", {});
+export const KilledFrame = Schema.TaggedStruct("Killed", { killedAt: Schema.Number });
+
+export const EventsFrame = Schema.TaggedStruct("Events", { events: Schema.Array(TimelineEvent) });
 
 export const RevivedFrame = Schema.TaggedStruct("Revived", { lives: Schema.Number });
 
 export const RunFailedFrame = Schema.TaggedStruct("RunFailed", { reason: Schema.String });
 
-export const ServerFrame = Schema.Union([SnapshotFrame, LiveFrame, BlocksFrame, FilesFrame, BusyFrame, KilledFrame, RevivedFrame, RunFailedFrame]);
+export const ServerFrame = Schema.Union([SnapshotFrame, LiveFrame, BlocksFrame, FilesFrame, BusyFrame, KilledFrame, RevivedFrame, RunFailedFrame, EventsFrame]);
 
 export type ServerFrame = typeof ServerFrame.Type;
 

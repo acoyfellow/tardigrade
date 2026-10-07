@@ -1,26 +1,49 @@
 @import "tailwindcss";
 
 @theme {
-	--color-bg: #0e0d13;
-	--color-panel: #15141c;
-	--color-raised: #1c1a26;
-	--color-line: #25232f;
-	--color-line-strong: #363249;
-	--color-ink: #ecebf3;
-	--color-dim: #a19db4;
-	--color-faint: #69657d;
-	--color-accent: #c9b3ff;
-	--color-accent-ink: #17131f;
-	--color-accent-soft: #251f3a;
-	--color-accent-line: #3f3668;
-	--color-ok: #7ee0a8;
-	--color-warn: #ffcf70;
-	--color-bad: #ff6b7a;
-	--color-bad-soft: #2a1418;
-	--color-bad-line: #5a2a33;
-	--font-sans: "Google Sans Flex", "Google Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	--color-bg: #ffffff;
+	--color-panel: #fafafa;
+	--color-raised: #f2f2f2;
+	--color-line: #ebebeb;
+	--color-line-strong: #d4d4d4;
+	--color-ink: #171717;
+	--color-dim: #4d4d4d;
+	--color-faint: #737373;
+	--color-accent: #171717;
+	--color-accent-ink: #ffffff;
+	--color-life: #7c3aed;
+	--color-life-soft: #f5f0ff;
+	--color-life-line: #ddd0fb;
+	--color-ok: #107d32;
+	--color-bad: #c41a1a;
+	--color-bad-soft: #fff0f0;
+	--color-bad-line: #fbcaca;
+	--color-info: #0068d6;
+	--font-sans: "Google Sans Flex", "Google Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 	--font-mono: "Google Sans Mono", "Google Sans Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-	--animate-pulse-fast: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--color-bg: #0a0a0a;
+		--color-panel: #111111;
+		--color-raised: #1a1a1a;
+		--color-line: #242424;
+		--color-line-strong: #333333;
+		--color-ink: #ededed;
+		--color-dim: #a1a1a1;
+		--color-faint: #8f8f8f;
+		--color-accent: #ededed;
+		--color-accent-ink: #0a0a0a;
+		--color-life: #b79cff;
+		--color-life-soft: #1a1426;
+		--color-life-line: #3a2d5c;
+		--color-ok: #4fd17a;
+		--color-bad: #ff6166;
+		--color-bad-soft: #2a1011;
+		--color-bad-line: #5c1f22;
+		--color-info: #52a8ff;
+	}
 }
 
 @layer base {
@@ -28,12 +51,21 @@
 	body,
 	#root {
 		@apply h-full bg-bg text-ink font-sans antialiased;
-		font-size: 15px;
-		line-height: 1.55;
+		font-size: 14px;
+		line-height: 1.6;
+		font-variant-numeric: tabular-nums;
 	}
 
-	button:focus-visible,
-	textarea:focus-visible {
-		@apply outline-2 outline-offset-2 outline-accent;
+	:focus-visible {
+		@apply outline-2 outline-offset-2 outline-info;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		*,
+		*::before,
+		*::after {
+			animation: none !important;
+			transition: none !important;
+		}
 	}
 }

@@ -7,8 +7,12 @@ import { type Conversation, createRegistry, defineExtension, defineTool, Harness
 import { Clock, Effect, Option, Result, Schema } from "effect";
 import {
 	BlocksFrame,
+	BackEvent,
 	BusyFrame,
 	type ConversationName,
+	EventsFrame,
+	FailedEvent,
+	KilledEvent,
 	FileNotFound,
 	FilesFrame,
 	KilledFrame,
@@ -26,6 +30,7 @@ import {
 	SnapshotJson,
 	SnapshotFrame,
 	StillWorking,
+	type TimelineEvent,
 } from "../shared/protocol";
 import { Repo, type RepoFiles } from "./files";
 import { openDurableObjectSqliteStorage } from "./vendor/pi-durable-do-sqlite";
@@ -204,12 +209,29 @@ export class Agent extends DurableObject<AgentEnv> {
 		return Option.map(this.live, (state) => toLive(state, quietForMs));
 	}
 
-	private resumePending(opened: Opened): void {
-		Option.map(this.meta.pending().pipe(Option.flatMap(decodePending)), (pending) => {
-			if (this.meta.takeKill()) this.broadcast(RevivedFrame.make({ lives: this.meta.lives() }));
+	private async blockCount(opened: Opened): Promise<number> {
+		return (await this.blocks(opened)).length;
+	}
 
-			this.drive(opened, pending.id, pending.text);
-		});
+	private record(event: TimelineEvent): void {
+		this.broadcast(EventsFrame.make({ events: this.meta.addEvent(event) }));
+	}
+
+	private resumePending(opened: Opened): void {
+		const pending = this.meta.pending().pipe(Option.flatMap(decodePending));
+		const killedAt = this.meta.takeKill();
+
+		this.ctx.waitUntil(this.recordComeback(opened, killedAt, Option.isSome(pending)));
+		Option.map(pending, ({ id, text }) => this.drive(opened, id, text));
+	}
+
+	private async recordComeback(opened: Opened, killedAt: Option.Option<number>, resumed: boolean): Promise<void> {
+		if (Option.isNone(killedAt)) return;
+
+		const at = Date.now();
+
+		this.record(BackEvent.make({ at, afterBlock: await this.blockCount(opened), afterMs: at - killedAt.value, lives: this.meta.lives(), resumed }));
+		this.broadcast(RevivedFrame.make({ lives: this.meta.lives() }));
 	}
 
 	private drive(opened: Opened, id: string, input: string): void {
@@ -227,9 +249,9 @@ export class Agent extends DurableObject<AgentEnv> {
 			const submission = await opened.conversation.submit({ type: "input", content: input, requestId: id }, CONTEXT);
 			const settled = await submission.wait(CONTEXT);
 
-			if (settled.status !== "done") this.broadcast(RunFailedFrame.make({ reason: `Run ended: ${settled.status}` }));
+			if (settled.status !== "done") await this.recordFailure(opened, `Run ended: ${settled.status}`);
 		} catch (error) {
-			this.broadcast(RunFailedFrame.make({ reason: String(error) }));
+			await this.recordFailure(opened, String(error));
 		} finally {
 			this.meta.clearPending();
 			this.driving = false;
@@ -238,6 +260,11 @@ export class Agent extends DurableObject<AgentEnv> {
 			this.broadcast(BusyFrame.make({ busy: false }));
 			this.broadcast(SnapshotFrame.make({ snapshot: await this.snapshot(opened) }));
 		}
+	}
+
+	private async recordFailure(opened: Opened, reason: string): Promise<void> {
+		this.record(FailedEvent.make({ at: Date.now(), afterBlock: await this.blockCount(opened), reason }));
+		this.broadcast(RunFailedFrame.make({ reason }));
 	}
 
 	private async blocks(opened: Opened) {
@@ -269,6 +296,8 @@ export class Agent extends DurableObject<AgentEnv> {
 			live: this.liveView(),
 			files,
 			commits,
+			events: this.meta.events(),
+			killedAt: this.meta.killedAt(),
 		};
 	}
 
@@ -290,12 +319,16 @@ export class Agent extends DurableObject<AgentEnv> {
 	}
 
 	async kill(name: ConversationName): Promise<string> {
-		await this.open(Option.some(name));
+		const opened = await this.open(Option.some(name));
 
 		if (Option.isNone(this.meta.pending())) return encodeKill(Result.fail(new NothingRunning()));
 
-		this.meta.recordKill();
-		this.broadcast(KilledFrame.make({}));
+		const killedAt = Date.now();
+
+		this.meta.recordKill(killedAt);
+		this.meta.addEvent(KilledEvent.make({ at: killedAt, afterBlock: await this.blockCount(opened), wasBusy: this.driving }));
+		this.broadcast(EventsFrame.make({ events: this.meta.events() }));
+		this.broadcast(KilledFrame.make({ killedAt }));
 		await this.ctx.storage.setAlarm(Date.now() + REVIVE_AFTER_MS);
 		await this.ctx.storage.sync();
 		this.ctx.abort("killed from the UI");
