@@ -8,7 +8,7 @@ Give it a task and press **Kill it** while it works. Its Durable Object calls `c
 
 ![Five kills in a row. Each shows Killed, then Back after, and the task still ends with one commit.](docs/kill5.gif)
 
-*A real run: five kills, one every eight seconds. The kills play at 1.6×, the rest at 4×. It ends with 6 lives, one file, and one commit. [MP4](docs/kill5.mp4).*
+*A real run: five kills, about one every ten seconds. The kills play at 1.6×, the rest at 4×. It ends with 6 lives, one file, and one commit. [MP4](docs/kill5.mp4).*
 
 tardigrade is a reference app to read and fork, and to run for yourself behind Cloudflare Access. It is not a hosted product, and it is not safe on the open internet: anyone who can open it spends your Workers AI budget.
 
@@ -164,7 +164,7 @@ kill 5: lives=6 busy=true
 
 ### The whole agent, killed three times, offline
 
-[`test/revival/`](test/revival) runs the real `Agent` Durable Object and the real `conversationLayer` inside workerd, with two Layers swapped: Pi's fake model, and files kept in the object's own storage. It sends a task, kills the object three times with `ctx.abort()` while it works, and requires 4 lives, exactly `Killed, Back` three times in the stored timeline, and the finished file. It needs no account and no network, and it runs on every `npm run check`.
+[`test/revival/`](test/revival) runs the real `Agent` Durable Object and the real `conversationLayer` inside workerd, with two Layers swapped: Pi's fake model, and files kept in the object's own storage ([`stored-repo.ts`](test/revival/stored-repo.ts), test code only). A second case swaps in a repo that rejects every push, and requires the model to get a clear tool error and the run to end. It sends a task, kills the object three times with `ctx.abort()` while it works, and requires 4 lives, exactly `Killed, Back` three times in the stored timeline, and the finished file. It needs no account and no network, and it runs on every `npm run check`.
 
 ### Pi Durable's storage suite, inside the real runtime
 
@@ -262,6 +262,8 @@ The Worker also refuses writes and WebSocket connections from other origins, so 
 - **Values cross the Durable Object boundary as JSON strings.** Durable Object RPC uses structured clone, which drops the classes Effect uses for errors and results. Each method encodes with the shared Schema and the Worker decodes it, so a wrong field is a decode error, not a silent `undefined`.
 - **HTTP for requests, a WebSocket for pushes.** Snapshot, Send, Kill, and ReadFile are one `effect/rpc` group over HTTP. Pushes go over a hibernatable WebSocket as Schema-encoded frames: live text, blocks, files, kills, and comebacks. A streaming RPC would keep the object awake. A hibernated socket does not.
 - **The timeline lives next to the work.** Kills, comebacks, and failures are stored in the same Durable Object as the harness, each with the transcript position where it happened. An event is stored before its frame is sent, so what a tab saw and what a refresh shows cannot drift apart.
+- **The alarm keeps the work alive, not `waitUntil`.** Background work starts with `ctx.waitUntil`, but a Durable Object can still be evicted while no request is open. A running task keeps a watchdog alarm about 15 seconds out. If the object is gone when it fires, the alarm wakes a new instance, which reads the pending request and resumes it.
+- **Each new instance clones the repo again.** Files live in Artifacts, and after a kill the new instance clones the whole repo into memory before its first file call. That is fine for a few small files. For big repos, cache the HEAD oid and the pack in SQLite.
 - **The SQLite adapter is vendored.** Pi's Durable Object adapter is on Pi's `main` branch but not yet in a release. `npm run vendor:pi-durable` regenerates the copy from a pinned commit. Delete `worker/vendor/` when `@earendil-works/pi-durable` ships the `storage/sqlite/cloudflare` export.
 
 ## Contributing

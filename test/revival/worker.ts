@@ -2,6 +2,7 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@ear
 import { Effect, Layer, Option, Schema } from "effect";
 import { Agent, conversationLayer } from "../../worker/agent";
 import { PushRejected, Repo } from "../../worker/files";
+import { storedRepo } from "./stored-repo";
 import { Model } from "../../worker/harness";
 import { ConversationName, KILLED_FROM_THE_UI, SnapshotJson } from "../../shared/protocol";
 
@@ -30,7 +31,7 @@ const scripted = () => {
 
 export class RevivalAgent extends Agent {
 	protected override layer(ctx: DurableObjectState) {
-		return conversationLayer(ctx, scripted(), Repo.inObjectStorage(ctx.storage));
+		return conversationLayer(ctx, scripted(), storedRepo(ctx.storage));
 	}
 }
 

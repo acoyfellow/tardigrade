@@ -1,7 +1,7 @@
-import { Context, Effect, Layer, Option, Schema } from "effect";
+import { Context, Effect, Layer, Option, Predicate, Schema } from "effect";
 import { HttpRouter } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
-import { AgentRpcs, AgentUnavailable, ConversationName, KILLED_FROM_THE_UI, KillOutcomeJson, ReadOutcomeJson, RPC_PATH, SendOutcomeJson, SnapshotJson } from "../shared/protocol";
+import { AgentRpcs, AgentUnavailable, ConversationName, KillOutcomeJson, ReadOutcomeJson, RPC_PATH, SendOutcomeJson, SnapshotJson } from "../shared/protocol";
 import { accessConfig, accessToken, verifyAccessToken } from "./access";
 import { Agent, type AgentEnv } from "./agent";
 
@@ -39,7 +39,14 @@ const unavailable = (cause: unknown) => new AgentUnavailable({ reason: String(ca
 
 const call = <A>(promise: () => Promise<A>): Effect.Effect<A, AgentUnavailable> => Effect.tryPromise({ try: promise, catch: unavailable });
 
-const wasAborted = (error: AgentUnavailable): boolean => error.reason.includes(KILLED_FROM_THE_UI);
+const isKilled = Predicate.isTagged("Killed");
+
+const storedKills = (env: Env, name: ConversationName) =>
+	call(() => agentFor(env, name).getSnapshot(name)).pipe(
+		Effect.flatMap(decodeSnapshot),
+		Effect.catchTag("SchemaError", Effect.die),
+		Effect.map((snapshot) => snapshot.events.filter(isKilled).length),
+	);
 
 const handlers = (env: Env) =>
 	AgentRpcs.toLayer({
@@ -47,12 +54,21 @@ const handlers = (env: Env) =>
 		Send: ({ name, text }) =>
 			call(() => agentFor(env, name).send(name, text)).pipe(Effect.flatMap(decodeSend), Effect.catchTag("SchemaError", Effect.die), Effect.flatMap(Effect.fromResult)),
 		Kill: ({ name }) =>
-			call(() => agentFor(env, name).kill(name)).pipe(
-				Effect.flatMap(decodeKill),
-				Effect.catchTag("SchemaError", Effect.die),
-				Effect.flatMap(Effect.fromResult),
-				Effect.catchTag("AgentUnavailable", (error) => (wasAborted(error) ? Effect.void : Effect.fail(error))),
-			),
+			Effect.gen(function* () {
+				const before = yield* storedKills(env, name);
+
+				return yield* call(() => agentFor(env, name).kill(name)).pipe(
+					Effect.flatMap(decodeKill),
+					Effect.catchTag("SchemaError", Effect.die),
+					Effect.flatMap(Effect.fromResult),
+					Effect.catchTag("AgentUnavailable", (dropped) =>
+						storedKills(env, name).pipe(
+							Effect.orElseSucceed(() => before),
+							Effect.flatMap((after) => (after > before ? Effect.void : Effect.fail(dropped))),
+						),
+					),
+				);
+			}),
 		ReadFile: ({ name, path }) =>
 			call(() => agentFor(env, name).readFile(name, path)).pipe(Effect.flatMap(decodeRead), Effect.catchTag("SchemaError", Effect.die), Effect.flatMap(Effect.fromResult)),
 	});

@@ -140,27 +140,31 @@ export class ConversationAgent extends Context.Service<ConversationAgent, Conver
 
 				const revival = Effect.gen(function* () {
 					const at = yield* now;
+					const afterBlock = yield* blockCount;
 					const killedAt = yield* store.takeKill;
 					const pending = Option.flatMap(yield* store.pending, decodePending);
 
 					if (Option.isNone(killedAt) && Option.isSome(pending)) yield* store.recordRestart;
 
-					return { at, killedAt, pending };
+					const lives = yield* store.lives;
+
+					const comeback: Option.Option<TimelineEvent> = Option.isSome(killedAt)
+						? Option.some(BackEvent.make({ at, afterBlock, afterMs: at - killedAt.value, lives, resumed: Option.isSome(pending) }))
+						: Option.isSome(pending)
+							? Option.some(ResumedEvent.make({ at, afterBlock, lives }))
+							: Option.none();
+
+					const events = Option.isSome(comeback) ? yield* store.addEvent(comeback.value) : [];
+
+					return { lives, events, comeback, pending };
 				});
 
-				const comeBack = ({ at, killedAt, pending }: Effect.Success<typeof revival>) =>
+				const comeBack = ({ lives, events, comeback, pending }: Effect.Success<typeof revival>) =>
 					Effect.gen(function* () {
-						if (Option.isNone(killedAt) && Option.isNone(pending)) return;
+						if (Option.isNone(comeback)) return;
 
-						const afterBlock = yield* blockCount;
-
-						if (Option.isSome(killedAt)) {
-							yield* record(BackEvent.make({ at, afterBlock, afterMs: at - killedAt.value, lives: yield* store.lives, resumed: Option.isSome(pending) }));
-						} else {
-							yield* record(ResumedEvent.make({ at, afterBlock, lives: yield* store.lives }));
-						}
-
-						yield* broadcast.send(RevivedFrame.make({ lives: yield* store.lives }));
+						yield* broadcast.send(EventsFrame.make({ events }));
+						yield* broadcast.send(RevivedFrame.make({ lives }));
 
 						if (Option.isSome(pending)) yield* drive(pending.value.id, pending.value.text);
 					});
